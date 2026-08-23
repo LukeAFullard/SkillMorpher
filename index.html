@@ -210,6 +210,11 @@
 
   .manifest-actions{ margin-top:20px; display:flex; gap:10px; flex-wrap:wrap; }
 
+  .cred-banner{
+    font-size:12.5px; padding:10px; margin-top:14px; border-radius:2px;
+    background: rgba(180,121,30,0.12); border:1px solid var(--amber); color:#7a5314;
+  }
+
   .stamp-seal{
     position:absolute; top:14px; right:18px;
     font-family:var(--type); font-weight:700; font-size:13px; letter-spacing:.08em;
@@ -219,6 +224,7 @@
     animation: stamp-in .28s ease-out .05s forwards;
     pointer-events:none;
   }
+  .stamp-seal.stamp-seal-warn{ color:var(--red); border-color:var(--red); }
   @keyframes stamp-in{
     0%{ transform:rotate(-8deg) scale(1.6); opacity:0; }
     60%{ transform:rotate(-8deg) scale(0.92); opacity:1; }
@@ -324,7 +330,7 @@
       </div>
     </div>
 
-    <div id="bodyCredBanner" style="display:none; font-size:12.5px; padding:10px; background:#fff3cd; border:1px solid var(--amber); color:#856404; margin-top:14px; border-radius:2px;"></div>
+    <div id="bodyCredBanner" class="cred-banner" style="display:none;"></div>
 
     <label class="small">Files</label>
     <ul class="manifest" id="fileManifest"></ul>
@@ -362,17 +368,22 @@
   const NETWORK_HINTS = ['requests.get(','requests.post(','urllib','http.client','fetch(','curl ','axios','urlopen(','socket.connect'];
 
   const CREDENTIAL_ENV_PATTERNS = [
-    /\b[A-Z][A-Z0-9_]*_(API_KEY|ACCESS_TOKEN|SECRET_KEY|TOKEN)\b/,
+    /\b[A-Z][A-Z0-9_]*_(API_KEY|ACCESS_TOKEN|SECRET_KEY|TOKEN|PASSWORD|PASSWD|CLIENT_SECRET)\b/,
+  ];
+  const SOFT_CREDENTIAL_HINTS = [
     /\bapi[_-]?key\b/i,
   ];
 
   const SECRET_VALUE_PATTERNS = [
+    { name: 'Anthropic key', re: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/ },
     { name: 'OpenAI key',    re: /\bsk-[A-Za-z0-9]{20,}\b/ },
     { name: 'Google API key', re: /\bAIza[A-Za-z0-9_-]{35}\b/ },
     { name: 'GitHub token',  re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
     { name: 'AWS access key', re: /\bAKIA[0-9A-Z]{16}\b/ },
     { name: 'Slack token',   re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
   ];
+
+  const PEM_BLOCK_RE = /-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/;
 
   const PLACEHOLDER_HINTS = /(YOUR_|<.*>|xxx+|PLACEHOLDER|\.\.\.)/i;
 
@@ -383,14 +394,18 @@
   function sanitizeZipPath(p) {
     return p.split('/').filter(seg => seg && seg !== '.' && seg !== '..').join('/');
   }
-  function scanForCredentials(content) {
-    const hasKeyReference = CREDENTIAL_ENV_PATTERNS.some(p => p.test(content));
+  function scanForCredentials(content, includeSoft) {
+    const patterns = includeSoft
+      ? CREDENTIAL_ENV_PATTERNS.concat(SOFT_CREDENTIAL_HINTS)
+      : CREDENTIAL_ENV_PATTERNS;
+    const hasKeyReference = patterns.some(p => p.test(content));
     const secrets = SECRET_VALUE_PATTERNS
       .filter(({ re }) => {
         const m = content.match(re);
         return m && !PLACEHOLDER_HINTS.test(m[0]);
       })
       .map(s => s.name);
+    if (PEM_BLOCK_RE.test(content)) secrets.push('private key block');
     return { hasKeyReference, secrets };
   }
   function classifyFile(relPath){
@@ -487,25 +502,32 @@
     for (const blob of siblings){
       const relPath = blob.path.slice(prefix.length);
       const cleanPath = sanitizeZipPath(relPath);
+      const pathAltered = cleanPath !== relPath;
       const fileClass = classifyFile(cleanPath);
       if (!fileClass.allowed){ files.push({ path: cleanPath, content:null, status:'dropped', reason: fileClass.reason }); continue; }
       const res = await fetch(rawBase + blob.path);
       const text = await res.text();
       const netWarn = scanForNetworkCalls(text);
       const cred = scanForCredentials(text);
+      const isEnvFile = cleanPath.toLowerCase().endsWith('.env');
       let status = 'ok', reason = null;
 
       if (cred.secrets.length) {
         status = 'blocked';
         reason = `looks like a real ${cred.secrets.join('/')} value — excluded from export`;
+      } else if (isEnvFile) {
+        status = 'warn';
+        reason = '.env file — review for secrets before uploading';
       } else if (netWarn || cred.hasKeyReference) {
         status = 'warn';
         reason = netWarn
           ? 'script calls the network — Spark scripts can\u2019t reach external sites'
           : 'references a third-party API key — not usable in Spark\u2019s sandbox';
-      } else if (cleanPath.toLowerCase().endsWith('.env')) {
-        status = 'warn';
-        reason = '.env file — review for secrets before uploading';
+      }
+
+      if (pathAltered) {
+        reason = (reason ? reason + '; ' : '') + 'path sanitized (contained .. or a leading slash)';
+        if (status === 'ok') status = 'warn';
       }
 
       files.push({ path: cleanPath, content: text, status, reason });
@@ -538,7 +560,7 @@
       fixNote.style.display = 'none';
     }
 
-    const bodyCred = scanForCredentials(body + ' ' + desc);
+    const bodyCred = scanForCredentials(body + ' ' + desc, true);
     const bodyBanner = el('bodyCredBanner');
     if (bodyCred.hasKeyReference || bodyCred.secrets.length) {
       bodyBanner.style.display = 'block';
@@ -717,24 +739,31 @@
           }
           const relToSkill = prefix ? relPath.slice(prefix.length) : relPath;
           const cleanPath = sanitizeZipPath(relToSkill);
+          const pathAltered = cleanPath !== relToSkill;
           const fileClass = classifyFile(cleanPath);
           if (!fileClass.allowed){ files.push({ path: cleanPath, content:null, status:'dropped', reason: fileClass.reason }); continue; }
           const text = await entry.async('text');
           const netWarn = scanForNetworkCalls(text);
           const cred = scanForCredentials(text);
+          const isEnvFile = cleanPath.toLowerCase().endsWith('.env');
           let status = 'ok', reason = null;
 
           if (cred.secrets.length) {
             status = 'blocked';
             reason = `looks like a real ${cred.secrets.join('/')} value — excluded from export`;
+          } else if (isEnvFile) {
+            status = 'warn';
+            reason = '.env file — review for secrets before uploading';
           } else if (netWarn || cred.hasKeyReference) {
             status = 'warn';
             reason = netWarn
               ? 'script calls the network — Spark scripts can\u2019t reach external sites'
               : 'references a third-party API key — not usable in Spark\u2019s sandbox';
-          } else if (cleanPath.toLowerCase().endsWith('.env')) {
-            status = 'warn';
-            reason = '.env file — review for secrets before uploading';
+          }
+
+          if (pathAltered) {
+            reason = (reason ? reason + '; ' : '') + 'path sanitized (contained .. or a leading slash)';
+            if (status === 'ok') status = 'warn';
           }
 
           files.push({ path: cleanPath, content: text, status, reason });
@@ -778,6 +807,7 @@
     const skillMdContent = '---\n' + fmYaml + '\n---\n\n' + skill.instructions + '\n';
     zip.file('SKILL.md', skillMdContent);
     const includeBlocked = el('includeBlockedCheckbox').checked;
+    const shippedBlocked = includeBlocked && skill.files.some(f => f.status === 'blocked');
     skill.files
       .filter(f => f.status === 'ok' || f.status === 'warn' || (includeBlocked && f.status === 'blocked'))
       .forEach(f => zip.file(f.path, f.content));
@@ -791,8 +821,8 @@
     const card = el('manifestCard');
     document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
     const seal = document.createElement('div');
-    seal.className = 'stamp-seal';
-    seal.textContent = 'CLEARED · SPARK';
+    seal.className = 'stamp-seal' + (shippedBlocked ? ' stamp-seal-warn' : '');
+    seal.textContent = shippedBlocked ? 'INCLUDES FLAGGED SECRETS' : 'CLEARED · SPARK';
     card.appendChild(seal);
   });
 

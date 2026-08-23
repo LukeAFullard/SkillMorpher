@@ -83,6 +83,14 @@ test('Credential scanning and path sanitization helper functions', () => {
   `);
   const { scanForCredentials, sanitizeZipPath } = fnEvaluator();
 
+  // Test Anthropic key (literal secret)
+  const antResult = scanForCredentials('KEY="sk-ant-api03-12345678901234567890"');
+  assert.deepStrictEqual(antResult.secrets, ['Anthropic key']);
+
+  // Test PEM private key block
+  const pemResult = scanForCredentials('-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----');
+  assert.deepStrictEqual(pemResult.secrets, ['private key block']);
+
   // Test fake sk-... value (literal secret)
   const secretResult = scanForCredentials('KEY="sk-123456789012345678901234"');
   assert.deepStrictEqual(secretResult.secrets, ['OpenAI key']);
@@ -91,9 +99,19 @@ test('Credential scanning and path sanitization helper functions', () => {
   const placeholderResult = scanForCredentials('KEY="YOUR_API_KEY_HERE"');
   assert.deepStrictEqual(placeholderResult.secrets, []);
 
-  // Test OPENAI_API_KEY prose in body
+  // Test strict key reference (e.g. OPENAI_API_KEY, DB_PASSWORD)
   const envRefResult = scanForCredentials('This requires OPENAI_API_KEY to function.');
   assert.strictEqual(envRefResult.hasKeyReference, true);
+
+  const pwdRefResult = scanForCredentials('Requires DB_PASSWORD setting');
+  assert.strictEqual(pwdRefResult.hasKeyReference, true);
+
+  // Test soft vs strict reference separation
+  const softProseResult = scanForCredentials('Please supply your api_key here');
+  assert.strictEqual(softProseResult.hasKeyReference, false, 'Bare "api_key" should not trigger strict hasKeyReference');
+
+  const softProseIncludedResult = scanForCredentials('Please supply your api_key here', true);
+  assert.strictEqual(softProseIncludedResult.hasKeyReference, true, 'Bare "api_key" should trigger soft hasKeyReference when includeSoft=true');
 
   // Test path sanitizer with ../../evil.js
   const sanitized = sanitizeZipPath('../../evil.js');
