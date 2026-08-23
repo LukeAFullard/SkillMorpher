@@ -6,7 +6,7 @@ test('index.html exists and is non-empty', () => {
   const content = fs.readFileSync('index.html', 'utf8');
   assert.ok(content.length > 0, 'index.html should not be empty');
   assert.ok(content.includes('<!doctype html>'), 'index.html should start with doctype');
-  assert.ok(content.includes('Skill Customs'), 'index.html should contain title header');
+  assert.ok(content.includes('SkillMorpher'), 'index.html should contain title header');
 });
 
 test('index.html contains expected DOM element IDs and script logic', () => {

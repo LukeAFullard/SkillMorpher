@@ -1,6 +1,6 @@
-# Skill Customs (SkillMorpher)
+# SkillMorpher
 
-**Skill Customs** (also referred to as **SkillMorpher**) is a client-side web tool designed to audit, clean, and convert Agent Skills (`SKILL.md` bundles) into custom, compliant skill packages optimized for Gemini Spark.
+**SkillMorpher** is a client-side web tool designed to audit, clean, and convert Agent Skills (`SKILL.md` bundles) into custom, compliant skill packages optimized for Gemini Spark.
 
 ## Features
 
