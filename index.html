@@ -206,6 +206,7 @@
   .stamp-tag.ok{ color:var(--green); border:1px solid var(--green); }
   .stamp-tag.drop{ color:var(--red); border:1px solid var(--red); }
   .stamp-tag.warn{ color:var(--amber); border:1px solid var(--amber); }
+  .stamp-tag.blocked{ color:#fff; background:var(--red); border:1px solid var(--red); }
 
   .manifest-actions{ margin-top:20px; display:flex; gap:10px; flex-wrap:wrap; }
 
@@ -323,8 +324,15 @@
       </div>
     </div>
 
+    <div id="bodyCredBanner" style="display:none; font-size:12.5px; padding:10px; background:#fff3cd; border:1px solid var(--amber); color:#856404; margin-top:14px; border-radius:2px;"></div>
+
     <label class="small">Files</label>
     <ul class="manifest" id="fileManifest"></ul>
+
+    <div style="margin-top:14px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="includeBlockedCheckbox">
+      <label for="includeBlockedCheckbox" style="font-size:12.5px; color:rgba(22,29,48,0.75); cursor:pointer;">Include flagged secrets anyway (not recommended)</label>
+    </div>
 
     <div class="manifest-actions">
       <button class="primary" id="downloadBtn">Download Spark-ready .zip</button>
@@ -353,10 +361,38 @@
   const JUNK_PATTERNS = [/(^|\/)\.DS_Store$/i, /\.pyc$/i, /(^|\/)__pycache__(\/|$)/i, /(^|\/)\.git\//i];
   const NETWORK_HINTS = ['requests.get(','requests.post(','urllib','http.client','fetch(','curl ','axios','urlopen(','socket.connect'];
 
+  const CREDENTIAL_ENV_PATTERNS = [
+    /\b[A-Z][A-Z0-9_]*_(API_KEY|ACCESS_TOKEN|SECRET_KEY|TOKEN)\b/,
+    /\bapi[_-]?key\b/i,
+  ];
+
+  const SECRET_VALUE_PATTERNS = [
+    { name: 'OpenAI key',    re: /\bsk-[A-Za-z0-9]{20,}\b/ },
+    { name: 'Google API key', re: /\bAIza[A-Za-z0-9_-]{35}\b/ },
+    { name: 'GitHub token',  re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
+    { name: 'AWS access key', re: /\bAKIA[0-9A-Z]{16}\b/ },
+    { name: 'Slack token',   re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  ];
+
+  const PLACEHOLDER_HINTS = /(YOUR_|<.*>|xxx+|PLACEHOLDER|\.\.\.)/i;
+
   const state = { token:'', tree:null, owner:null, repo:null, branch:null, currentSkill:null };
 
   // ---------- helpers ----------
   function el(id){ return document.getElementById(id); }
+  function sanitizeZipPath(p) {
+    return p.split('/').filter(seg => seg && seg !== '.' && seg !== '..').join('/');
+  }
+  function scanForCredentials(content) {
+    const hasKeyReference = CREDENTIAL_ENV_PATTERNS.some(p => p.test(content));
+    const secrets = SECRET_VALUE_PATTERNS
+      .filter(({ re }) => {
+        const m = content.match(re);
+        return m && !PLACEHOLDER_HINTS.test(m[0]);
+      })
+      .map(s => s.name);
+    return { hasKeyReference, secrets };
+  }
   function classifyFile(relPath){
     const base = relPath.split('/').pop();
     if (JUNK_PATTERNS.some(p => p.test(relPath))) return { allowed:false, reason:'system/junk file' };
@@ -450,12 +486,29 @@
     const files = [];
     for (const blob of siblings){
       const relPath = blob.path.slice(prefix.length);
-      const { allowed, reason } = classifyFile(relPath);
-      if (!allowed){ files.push({ path: relPath, content:null, status:'dropped', reason }); continue; }
+      const cleanPath = sanitizeZipPath(relPath);
+      const fileClass = classifyFile(cleanPath);
+      if (!fileClass.allowed){ files.push({ path: cleanPath, content:null, status:'dropped', reason: fileClass.reason }); continue; }
       const res = await fetch(rawBase + blob.path);
       const text = await res.text();
-      const warn = scanForNetworkCalls(text) ? 'script appears to call the network — Spark scripts can\u2019t reach external sites' : null;
-      files.push({ path: relPath, content: text, status: warn ? 'warn' : 'ok', reason: warn });
+      const netWarn = scanForNetworkCalls(text);
+      const cred = scanForCredentials(text);
+      let status = 'ok', reason = null;
+
+      if (cred.secrets.length) {
+        status = 'blocked';
+        reason = `looks like a real ${cred.secrets.join('/')} value — excluded from export`;
+      } else if (netWarn || cred.hasKeyReference) {
+        status = 'warn';
+        reason = netWarn
+          ? 'script calls the network — Spark scripts can\u2019t reach external sites'
+          : 'references a third-party API key — not usable in Spark\u2019s sandbox';
+      } else if (cleanPath.toLowerCase().endsWith('.env')) {
+        status = 'warn';
+        reason = '.env file — review for secrets before uploading';
+      }
+
+      files.push({ path: cleanPath, content: text, status, reason });
     }
     return files;
   }
@@ -485,12 +538,21 @@
       fixNote.style.display = 'none';
     }
 
+    const bodyCred = scanForCredentials(body + ' ' + desc);
+    const bodyBanner = el('bodyCredBanner');
+    if (bodyCred.hasKeyReference || bodyCred.secrets.length) {
+      bodyBanner.style.display = 'block';
+      bodyBanner.textContent = 'This skill\'s instructions reference an API key — irrelevant/unsafe after conversion to Spark.';
+    } else {
+      bodyBanner.style.display = 'none';
+    }
+
     const list = el('fileManifest');
     list.innerHTML = '';
     const addRow = (path, status, why) => {
       const li = document.createElement('li');
-      const tagClass = status === 'ok' ? 'ok' : status === 'warn' ? 'warn' : 'drop';
-      const tagText = status === 'ok' ? 'PACKED' : status === 'warn' ? 'CHECK' : 'DROPPED';
+      const tagClass = status === 'ok' ? 'ok' : status === 'warn' ? 'warn' : status === 'blocked' ? 'blocked' : 'drop';
+      const tagText = status === 'ok' ? 'PACKED' : status === 'warn' ? 'CHECK' : status === 'blocked' ? 'BLOCKED' : 'DROPPED';
       li.innerHTML = '<span class="path">' + path + (why ? ' <span class="why">— ' + why + '</span>' : '') + '</span>' +
                       '<span class="stamp-tag ' + tagClass + '">' + tagText + '</span>';
       list.appendChild(li);
@@ -654,11 +716,28 @@
             continue; // SKILL.md at zip root — only take top-level files as siblings
           }
           const relToSkill = prefix ? relPath.slice(prefix.length) : relPath;
-          const { allowed, reason } = classifyFile(relToSkill);
-          if (!allowed){ files.push({ path: relToSkill, content:null, status:'dropped', reason }); continue; }
+          const cleanPath = sanitizeZipPath(relToSkill);
+          const fileClass = classifyFile(cleanPath);
+          if (!fileClass.allowed){ files.push({ path: cleanPath, content:null, status:'dropped', reason: fileClass.reason }); continue; }
           const text = await entry.async('text');
-          const warn = scanForNetworkCalls(text) ? 'script appears to call the network — Spark scripts can\u2019t reach external sites' : null;
-          files.push({ path: relToSkill, content:text, status: warn ? 'warn':'ok', reason: warn });
+          const netWarn = scanForNetworkCalls(text);
+          const cred = scanForCredentials(text);
+          let status = 'ok', reason = null;
+
+          if (cred.secrets.length) {
+            status = 'blocked';
+            reason = `looks like a real ${cred.secrets.join('/')} value — excluded from export`;
+          } else if (netWarn || cred.hasKeyReference) {
+            status = 'warn';
+            reason = netWarn
+              ? 'script calls the network — Spark scripts can\u2019t reach external sites'
+              : 'references a third-party API key — not usable in Spark\u2019s sandbox';
+          } else if (cleanPath.toLowerCase().endsWith('.env')) {
+            status = 'warn';
+            reason = '.env file — review for secrets before uploading';
+          }
+
+          files.push({ path: cleanPath, content: text, status, reason });
         }
         renderManifest('uploaded zip: ' + file.name, frontmatter, body, files);
         setDirectStatus('Parsed ' + file.name + '.', false);
@@ -698,7 +777,10 @@
     const fmYaml = jsyaml.dump(fmObj).trim();
     const skillMdContent = '---\n' + fmYaml + '\n---\n\n' + skill.instructions + '\n';
     zip.file('SKILL.md', skillMdContent);
-    skill.files.filter(f => f.status === 'ok' || f.status === 'warn').forEach(f => zip.file(f.path, f.content));
+    const includeBlocked = el('includeBlockedCheckbox').checked;
+    skill.files
+      .filter(f => f.status === 'ok' || f.status === 'warn' || (includeBlocked && f.status === 'blocked'))
+      .forEach(f => zip.file(f.path, f.content));
     const blob = await zip.generateAsync({ type:'blob' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
