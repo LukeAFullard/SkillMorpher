@@ -23,7 +23,9 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'copyName',
     'copyDesc',
     'copyInstr',
-    'downloadBtn'
+    'downloadBtn',
+    'includeBlockedCheckbox',
+    'bodyCredBanner'
   ];
 
   for (const id of expectedIds) {
@@ -35,6 +37,8 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'classifyFile',
     'toKebabCase',
     'scanForNetworkCalls',
+    'scanForCredentials',
+    'sanitizeZipPath',
     'parseSkillMd',
     'renderManifest'
   ];
@@ -54,4 +58,47 @@ test('JavaScript syntax is valid in index.html', () => {
   assert.doesNotThrow(() => {
     new Function(jsCode.replace(/await /g, ''));
   }, 'Inline JavaScript should compile without syntax errors');
+});
+
+test('Credential scanning and path sanitization helper functions', () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, '<script> block should exist');
+
+  const jsCode = scriptMatch[1];
+  // Extract and evaluate scanForCredentials and sanitizeZipPath with dummy DOM
+  const mockScript = jsCode
+    .replace(/await /g, '')
+    .replace(/\(function\(\)\{/, '(function(){\n  global.scanForCredentials = scanForCredentials;\n  global.sanitizeZipPath = sanitizeZipPath;\n');
+
+  const fnEvaluator = new Function(`
+    const dummyEl = { classList: { remove: () => {}, add: () => {} }, style: {}, addEventListener: () => {}, appendChild: () => {} };
+    const document = {
+      getElementById: () => dummyEl,
+      querySelectorAll: () => [],
+      createElement: () => dummyEl
+    };
+    ${mockScript}
+    return { scanForCredentials: global.scanForCredentials, sanitizeZipPath: global.sanitizeZipPath };
+  `);
+  const { scanForCredentials, sanitizeZipPath } = fnEvaluator();
+
+  // Test fake sk-... value (literal secret)
+  const secretResult = scanForCredentials('KEY="sk-123456789012345678901234"');
+  assert.deepStrictEqual(secretResult.secrets, ['OpenAI key']);
+
+  // Test placeholder string is NOT flagged as literal secret
+  const placeholderResult = scanForCredentials('KEY="YOUR_API_KEY_HERE"');
+  assert.deepStrictEqual(placeholderResult.secrets, []);
+
+  // Test OPENAI_API_KEY prose in body
+  const envRefResult = scanForCredentials('This requires OPENAI_API_KEY to function.');
+  assert.strictEqual(envRefResult.hasKeyReference, true);
+
+  // Test path sanitizer with ../../evil.js
+  const sanitized = sanitizeZipPath('../../evil.js');
+  assert.strictEqual(sanitized, 'evil.js');
+
+  const sanitizedNested = sanitizeZipPath('foo/../bar/./baz/../../evil.js');
+  assert.strictEqual(sanitizedNested, 'foo/bar/baz/evil.js');
 });
