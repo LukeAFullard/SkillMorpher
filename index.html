@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkillMorpher — clear Agent Skills for Gemini Spark</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+<style>
+  :root{
+    --ink:#161D30;
+    --ink-2:#1F2A45;
+    --paper:#F2ECDC;
+    --paper-2:#E9E1CB;
+    --line: rgba(22,29,48,0.16);
+    --line-on-ink: rgba(242,236,220,0.16);
+    --red:#B23A2E;
+    --green:#3E6B4F;
+    --amber:#B4791E;
+    --green-bright:#7FBB93;
+    --amber-bright:#D9A233;
+    --red-bright:#E4897C;
+    --ink-soft: rgba(242,236,220,0.72);
+    --mono: 'SF Mono', 'Consolas', 'Menlo', ui-monospace, monospace;
+    --type: 'Courier New', Courier, monospace;
+    --body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    background:var(--ink);
+    color:var(--paper);
+    font-family:var(--body);
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:880px; margin:0 auto; padding:32px 20px 80px; }
+
+  header.top{ margin-bottom:36px; }
+  .badge-row{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:14px; }
+  .stamp-mark{
+    display:inline-block;
+    font-family:var(--type);
+    font-size:11px;
+    letter-spacing:.14em;
+    color:var(--amber);
+    border:1px solid var(--amber);
+    padding:3px 8px;
+    border-radius:2px;
+  }
+  .rate-badge{
+    display:none;
+    align-items:center;
+    gap:6px;
+    font-family:var(--type);
+    font-size:11px;
+    letter-spacing:.08em;
+    padding:3px 8px;
+    border-radius:2px;
+    border:1px solid var(--green-bright);
+    color:var(--green-bright);
+    transition: border-color .25s ease, color .25s ease;
+  }
+  .rate-badge.warn{ border-color:var(--amber-bright); color:var(--amber-bright); }
+  .rate-badge.crit{ border-color:var(--red-bright); color:var(--red-bright); animation:rate-pulse 1.1s ease-in-out infinite; }
+  @keyframes rate-pulse{ 50%{ opacity:.55; } }
+  @media (prefers-reduced-motion: reduce){ .rate-badge.crit{ animation:none; } }
+  h1{
+    font-family:var(--type);
+    font-size:clamp(28px,5vw,40px);
+    letter-spacing:-.01em;
+    margin:0 0 10px;
+  }
+  header.top p{
+    color:var(--ink-soft);
+    max-width:56ch;
+    margin:0;
+    font-size:15px;
+  }
+  header.top p.fine{
+    font-size:12.5px;
+    margin-top:10px;
+    color:rgba(242,236,220,0.5);
+  }
+  header.top a{ color:var(--paper); }
+
+  .card{
+    background:var(--paper);
+    color:var(--ink);
+    border-radius:3px;
+    padding:22px 22px 24px;
+    margin-bottom:22px;
+    position:relative;
+    box-shadow:0 1px 0 rgba(0,0,0,0.2), 0 12px 30px -18px rgba(0,0,0,0.6);
+  }
+  .card::before{
+    content:"";
+    position:absolute; inset:6px;
+    border:1px dashed var(--line);
+    border-radius:2px;
+    pointer-events:none;
+  }
+  .card h2{
+    font-family:var(--type);
+    font-size:13px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    margin:0 0 4px;
+    color:var(--ink);
+  }
+  .card .sub{
+    font-size:12.5px;
+    color:rgba(22,29,48,0.6);
+    margin:0 0 16px;
+  }
+
+  .repo-row{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  button, .btn{
+    font-family:var(--body);
+    font-size:13.5px;
+    font-weight:600;
+    border:1px solid var(--ink);
+    background:transparent;
+    color:var(--ink);
+    padding:8px 14px;
+    border-radius:2px;
+    cursor:pointer;
+    transition:transform .05s ease, background .15s ease, color .15s ease;
+  }
+  button:hover{ background:var(--ink); color:var(--paper); }
+  button:active{ transform:translateY(1px); }
+  button.primary{ background:var(--amber); border-color:var(--amber); color:var(--ink); }
+  button.primary:hover{ background:#96630f; color:var(--paper); }
+  button.ghost{ border-color:var(--line); color:rgba(22,29,48,0.65); }
+  button:disabled{ opacity:.4; cursor:default; }
+  button:disabled:hover{ background:transparent; color:var(--ink); }
+
+  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  input[type=text], input[type=password], textarea{
+    font-family:var(--mono);
+    font-size:13px;
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:2px;
+    padding:9px 10px;
+    color:var(--ink);
+    flex:1;
+    min-width:220px;
+  }
+  textarea{ width:100%; min-height:220px; resize:vertical; }
+  label.small{
+    display:block;
+    font-family:var(--type);
+    font-size:11px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:rgba(22,29,48,0.55);
+    margin:14px 0 6px;
+  }
+
+  .results{ margin-top:16px; max-height:360px; overflow-y:auto; border-top:1px solid var(--line); }
+  .result-item{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:12px;
+    padding:11px 2px; border-bottom:1px solid var(--line); cursor:pointer;
+  }
+  .result-item:hover{ background:var(--paper-2); }
+  .result-item .name{ font-family:var(--mono); font-size:13px; font-weight:700; }
+  .result-item .desc{ font-size:12px; color:rgba(22,29,48,0.6); margin-top:2px; max-width:56ch;}
+  .tag{
+    font-family:var(--type); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
+    border:1px solid rgba(22,29,48,0.35); border-radius:2px; padding:2px 6px; white-space:nowrap;
+    color:rgba(22,29,48,0.65);
+  }
+
+  .divider-or{
+    text-align:center; font-family:var(--type); font-size:11px; letter-spacing:.2em;
+    color:rgba(242,236,220,0.4); margin:-4px 0 22px;
+  }
+
+  .status-msg{ font-size:12.5px; margin-top:10px; }
+  .status-msg.err{ color:var(--red); }
+  .status-msg.ok{ color:var(--green); }
+
+  .field-view{ display:grid; gap:4px; margin-bottom:14px; }
+  .field-view .value{
+    font-family:var(--mono); font-size:13px; background:#fff; border:1px solid var(--line);
+    border-radius:2px; padding:8px 10px; word-break:break-word;
+  }
+  .field-view textarea.value{ width:100%; min-height:140px; }
+  .field-row{ display:flex; gap:8px; align-items:flex-start; }
+  .field-row .value{ flex:1; }
+
+  .fix-note{ font-size:12px; color:var(--amber); margin-top:4px; }
+
+  ul.manifest{ list-style:none; margin:0; padding:0; }
+  ul.manifest li{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:7px 2px; border-bottom:1px solid var(--line); font-size:12.5px;
+  }
+  ul.manifest li .path{ font-family:var(--mono); }
+  ul.manifest li .why{ color:rgba(22,29,48,0.55); font-size:11.5px; }
+  .stamp-tag{
+    font-family:var(--type); font-size:10.5px; letter-spacing:.08em; padding:2px 7px;
+    border-radius:2px; text-transform:uppercase; flex-shrink:0;
+  }
+  .stamp-tag.ok{ color:var(--green); border:1px solid var(--green); }
+  .stamp-tag.drop{ color:var(--red); border:1px solid var(--red); }
+  .stamp-tag.warn{ color:var(--amber); border:1px solid var(--amber); }
+
+  .manifest-actions{ margin-top:20px; display:flex; gap:10px; flex-wrap:wrap; }
+
+  .stamp-seal{
+    position:absolute; top:14px; right:18px;
+    font-family:var(--type); font-weight:700; font-size:13px; letter-spacing:.08em;
+    color:var(--green); border:3px double var(--green); border-radius:4px;
+    padding:6px 10px; transform:rotate(-8deg) scale(0);
+    mix-blend-mode:multiply;
+    animation: stamp-in .28s ease-out .05s forwards;
+    pointer-events:none;
+  }
+  @keyframes stamp-in{
+    0%{ transform:rotate(-8deg) scale(1.6); opacity:0; }
+    60%{ transform:rotate(-8deg) scale(0.92); opacity:1; }
+    100%{ transform:rotate(-8deg) scale(1); opacity:1; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .stamp-seal{ animation:none; transform:rotate(-8deg) scale(1); opacity:1; }
+  }
+
+  footer{ margin-top:36px; font-size:12px; color:rgba(242,236,220,0.4); }
+  footer a{ color:rgba(242,236,220,0.65); }
+
+  .spinner{
+    display:inline-block; width:12px; height:12px; border:2px solid rgba(22,29,48,0.25);
+    border-top-color:var(--ink); border-radius:50%; animation:spin .6s linear infinite; vertical-align:-2px;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  ::selection{ background:var(--amber); color:var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="badge-row">
+      <span class="stamp-mark">FORM SK-1 · AGENT SKILLS</span>
+      <span class="rate-badge" id="rateBadge" title="GitHub API calls used this hour">
+        <span>API CALLS</span><span id="rateValue">— / —</span>
+      </span>
+    </div>
+    <h1>SkillMorpher</h1>
+    <p>Bring a <code>SKILL.md</code> skill — from a GitHub repo, a paste, or a zip — and get back exactly what's declared, what's dropped, and a zip ready to upload as a Gemini Spark skill.</p>
+    <p class="fine">Runs entirely in your browser. Nothing here is uploaded to a server — GitHub is queried directly from your device. See <a href="https://support.google.com/gemini/answer/17094296" target="_blank" rel="noopener">Google's Spark skill requirements</a> for reference.</p>
+  </header>
+
+  <!-- ============ BROWSE ============ -->
+  <div class="card">
+    <h2>Browse a library</h2>
+    <p class="sub">Pick a known skills repo, or point at any public GitHub repo.</p>
+
+    <div class="repo-row" id="builtinRepos"></div>
+
+    <div class="row">
+      <input type="text" id="customRepo" placeholder="owner/repo  (e.g. anthropics/skills)">
+      <button id="loadRepoBtn">Load repo</button>
+    </div>
+
+    <label class="small" for="ghToken">Optional GitHub token (raises the 60/hr rate limit — kept in memory only, not saved)</label>
+    <input type="password" id="ghToken" placeholder="ghp_...">
+
+    <div id="repoStatus" class="status-msg"></div>
+
+    <div id="repoFilterRow" class="row" style="display:none; margin-top:14px;">
+      <input type="text" id="filterBox" placeholder="Filter by name or category…">
+      <select id="categorySelect"><option value="">All categories</option></select>
+    </div>
+
+    <div class="results" id="results" style="display:none;"></div>
+  </div>
+
+  <div class="divider-or">— or —</div>
+
+  <!-- ============ DIRECT LOAD ============ -->
+  <div class="card">
+    <h2>Load directly</h2>
+    <p class="sub">Paste a SKILL.md, or upload a .md / .zip file.</p>
+    <div class="row" style="margin-bottom:10px;">
+      <input type="file" id="fileInput" accept=".md,.zip">
+      <button id="parsePasteBtn" class="ghost">Parse pasted text ↓</button>
+    </div>
+    <textarea id="pasteArea" placeholder="---&#10;name: my-skill&#10;description: what it does and when to use it&#10;---&#10;&#10;Instructions go here…"></textarea>
+    <div id="directStatus" class="status-msg"></div>
+  </div>
+
+  <!-- ============ MANIFEST / RESULT ============ -->
+  <div class="card" id="manifestCard" style="display:none;">
+    <h2>Manifest</h2>
+    <p class="sub" id="manifestSource"></p>
+
+    <div class="field-view">
+      <label class="small">Name — must be lowercase-hyphenated for Spark</label>
+      <div class="field-row">
+        <div class="value" id="nameValue"></div>
+        <button id="copyName" class="ghost">Copy</button>
+      </div>
+      <div class="fix-note" id="nameFixNote" style="display:none;"></div>
+    </div>
+
+    <div class="field-view">
+      <label class="small">Description</label>
+      <div class="field-row">
+        <div class="value" id="descValue"></div>
+        <button id="copyDesc" class="ghost">Copy</button>
+      </div>
+    </div>
+
+    <div class="field-view">
+      <label class="small">Instructions (skill body)</label>
+      <div class="field-row">
+        <textarea class="value" id="instrValue" readonly></textarea>
+        <button id="copyInstr" class="ghost">Copy</button>
+      </div>
+    </div>
+
+    <label class="small">Files</label>
+    <ul class="manifest" id="fileManifest"></ul>
+
+    <div class="manifest-actions">
+      <button class="primary" id="downloadBtn">Download Spark-ready .zip</button>
+      <button class="ghost" id="clearBtn">Clear</button>
+    </div>
+  </div>
+
+  <footer>
+    SkillMorpher · a small tool, not affiliated with Anthropic or Google · check any script's contents before uploading anywhere
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const BUILT_IN_REPOS = [
+    { label:'Anthropic (official)', owner:'anthropics', repo:'skills' },
+    { label:'OpenAI (official)', owner:'openai', repo:'skills' },
+    { label:'Gemini API skills', owner:'google-gemini', repo:'gemini-skills' },
+    { label:'Superpowers (community)', owner:'obra', repo:'superpowers' },
+  ];
+
+  const SPARK_ALLOWED_EXT = ['txt','md','rst','rtf','tex','log','py','sh','json','yaml','yml','csv','toml','xml','env','sql','html','css','svg'];
+  const SPARK_ALLOWED_BASENAMES = ['makefile','dockerfile'];
+  const JUNK_PATTERNS = [/(^|\/)\.DS_Store$/i, /\.pyc$/i, /(^|\/)__pycache__(\/|$)/i, /(^|\/)\.git\//i];
+  const NETWORK_HINTS = ['requests.get(','requests.post(','urllib','http.client','fetch(','curl ','axios','urlopen(','socket.connect'];
+
+  const state = { token:'', tree:null, owner:null, repo:null, branch:null, currentSkill:null };
+
+  // ---------- helpers ----------
+  function el(id){ return document.getElementById(id); }
+  function classifyFile(relPath){
+    const base = relPath.split('/').pop();
+    if (JUNK_PATTERNS.some(p => p.test(relPath))) return { allowed:false, reason:'system/junk file' };
+    const lower = base.toLowerCase();
+    if (SPARK_ALLOWED_BASENAMES.includes(lower)) return { allowed:true };
+    const ext = base.includes('.') ? base.split('.').pop().toLowerCase() : '';
+    if (SPARK_ALLOWED_EXT.includes(ext)) return { allowed:true };
+    return { allowed:false, reason: `.${ext || 'no-ext'} isn't a Spark-supported file type` };
+  }
+  function toKebabCase(name){
+    return (name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  }
+  function scanForNetworkCalls(content){
+    return NETWORK_HINTS.some(h => content.includes(h));
+  }
+  function parseSkillMd(raw){
+    const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+    if (!match) throw new Error('No YAML frontmatter found — expected a --- block at the very top of the file.');
+    const frontmatter = jsyaml.load(match[1]) || {};
+    const body = match[2].trim();
+    return { frontmatter, body };
+  }
+
+  // ---------- rate limit badge ----------
+  function updateRateBadge(remaining, limit){
+    remaining = parseInt(remaining, 10); limit = parseInt(limit, 10);
+    if (isNaN(remaining) || isNaN(limit) || limit === 0) return;
+    const used = limit - remaining;
+    const badge = el('rateBadge');
+    el('rateValue').textContent = used + ' / ' + limit;
+    badge.classList.remove('warn','crit');
+    const ratio = used / limit;
+    if (ratio >= 0.85) badge.classList.add('crit');
+    else if (ratio >= 0.5) badge.classList.add('warn');
+    badge.style.display = 'inline-flex';
+  }
+  async function refreshRateLimit(){
+    // Checking /rate_limit does not itself count against the quota.
+    try{
+      const headers = {};
+      if (state.token) headers['Authorization'] = 'token ' + state.token;
+      const res = await fetch('https://api.github.com/rate_limit', { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      const core = data.resources && data.resources.core;
+      if (core) updateRateBadge(core.remaining, core.limit);
+    } catch(e){ /* offline or blocked — badge just stays hidden */ }
+  }
+
+  // ---------- GitHub API ----------
+  async function ghFetch(url){
+    const headers = {};
+    if (state.token) headers['Authorization'] = 'token ' + state.token;
+    const res = await fetch(url, { headers });
+    const remaining = res.headers.get('X-RateLimit-Remaining');
+    const limit = res.headers.get('X-RateLimit-Limit');
+    if (remaining !== null && limit !== null) updateRateBadge(remaining, limit);
+    if (!res.ok){
+      if (res.status === 403) throw new Error('GitHub rate limit hit (60/hr unauthenticated). Add a token above and retry.');
+      if (res.status === 404) throw new Error('Repo or branch not found.');
+      throw new Error('GitHub request failed (' + res.status + ')');
+    }
+    return res.json();
+  }
+  async function loadRepo(owner, repo){
+    const info = await ghFetch('https://api.github.com/repos/' + owner + '/' + repo);
+    const branch = info.default_branch;
+    const treeData = await ghFetch('https://api.github.com/repos/' + owner + '/' + repo + '/git/trees/' + branch + '?recursive=1');
+    return { branch, tree: treeData.tree, truncated: !!treeData.truncated };
+  }
+  function findSkillPaths(tree){
+    return tree.filter(item => item.type === 'blob' && /(^|\/)SKILL\.md$/.test(item.path));
+  }
+  function skillFolderInfo(path){
+    const parts = path.split('/');
+    parts.pop();
+    const folderName = parts[parts.length-1] || '(root)';
+    let category = parts.length >= 2 ? parts[parts.length-2] : null;
+    if (category === 'skills') category = parts.length >= 3 ? parts[parts.length-3] : null;
+    return { folderName, category, folderPrefix: parts.join('/') };
+  }
+  async function fetchSkillFiles(owner, repo, branch, tree, skillMdPath){
+    const { folderPrefix } = skillFolderInfo(skillMdPath);
+    const prefix = folderPrefix ? folderPrefix + '/' : '';
+    const siblings = tree.filter(item => {
+      if (item.type !== 'blob' || item.path === skillMdPath) return false;
+      if (!prefix) return !item.path.includes('/'); // SKILL.md at repo root — only take top-level files
+      return item.path.startsWith(prefix);
+    });
+    const rawBase = 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/';
+    const files = [];
+    for (const blob of siblings){
+      const relPath = blob.path.slice(prefix.length);
+      const { allowed, reason } = classifyFile(relPath);
+      if (!allowed){ files.push({ path: relPath, content:null, status:'dropped', reason }); continue; }
+      const res = await fetch(rawBase + blob.path);
+      const text = await res.text();
+      const warn = scanForNetworkCalls(text) ? 'script appears to call the network — Spark scripts can\u2019t reach external sites' : null;
+      files.push({ path: relPath, content: text, status: warn ? 'warn' : 'ok', reason: warn });
+    }
+    return files;
+  }
+
+  // ---------- render: manifest ----------
+  function renderManifest(sourceLabel, frontmatter, body, files){
+    const name = (frontmatter && frontmatter.name) || '';
+    const desc = (frontmatter && frontmatter.description) || '';
+    const fixedName = toKebabCase(name);
+    const nameNeedsFix = fixedName && fixedName !== name;
+
+    state.currentSkill = { sourceLabel, name, fixedName: fixedName || 'unnamed-skill', description: desc, instructions: body, files };
+
+    el('manifestSource').textContent = sourceLabel;
+    el('nameValue').textContent = name || '(missing)';
+    el('descValue').textContent = desc || '(missing)';
+    el('instrValue').value = body || '';
+
+    const fixNote = el('nameFixNote');
+    if (!name){
+      fixNote.style.display = 'block';
+      fixNote.textContent = 'No name found in frontmatter — required by Spark.';
+    } else if (nameNeedsFix){
+      fixNote.style.display = 'block';
+      fixNote.textContent = 'Will be saved as "' + fixedName + '" — Spark requires lowercase, hyphen-separated names.';
+    } else {
+      fixNote.style.display = 'none';
+    }
+
+    const list = el('fileManifest');
+    list.innerHTML = '';
+    const addRow = (path, status, why) => {
+      const li = document.createElement('li');
+      const tagClass = status === 'ok' ? 'ok' : status === 'warn' ? 'warn' : 'drop';
+      const tagText = status === 'ok' ? 'PACKED' : status === 'warn' ? 'CHECK' : 'DROPPED';
+      li.innerHTML = '<span class="path">' + path + (why ? ' <span class="why">— ' + why + '</span>' : '') + '</span>' +
+                      '<span class="stamp-tag ' + tagClass + '">' + tagText + '</span>';
+      list.appendChild(li);
+    };
+    addRow('SKILL.md', 'ok', null);
+    files.forEach(f => addRow(f.path, f.status, f.reason));
+
+    document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
+    el('manifestCard').style.display = 'block';
+    el('manifestCard').scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+
+  // ---------- built-in repo buttons ----------
+  const reposWrap = el('builtinRepos');
+  BUILT_IN_REPOS.forEach(r => {
+    const b = document.createElement('button');
+    b.textContent = r.label;
+    b.addEventListener('click', () => handleLoadRepo(r.owner, r.repo));
+    reposWrap.appendChild(b);
+  });
+
+  el('ghToken').addEventListener('input', e => { state.token = e.target.value.trim(); });
+  el('ghToken').addEventListener('change', () => { refreshRateLimit(); });
+
+  el('loadRepoBtn').addEventListener('click', () => {
+    const val = el('customRepo').value.trim().replace(/^https?:\/\/github\.com\//i,'').replace(/\/$/,'');
+    const parts = val.split('/');
+    if (parts.length < 2){ setRepoStatus('Enter as owner/repo, e.g. anthropics/skills', true); return; }
+    handleLoadRepo(parts[0], parts[1]);
+  });
+
+  function setRepoStatus(msg, isErr){
+    const n = el('repoStatus');
+    n.textContent = msg;
+    n.className = 'status-msg' + (isErr ? ' err' : msg ? ' ok' : '');
+  }
+
+  async function handleLoadRepo(owner, repo){
+    setRepoStatus('Loading ' + owner + '/' + repo + '… ', false);
+    el('results').style.display = 'none';
+    el('repoFilterRow').style.display = 'none';
+    try{
+      const { branch, tree, truncated } = await loadRepo(owner, repo);
+      state.owner = owner; state.repo = repo; state.branch = branch; state.tree = tree;
+      const skillPaths = findSkillPaths(tree);
+      if (skillPaths.length === 0){
+        setRepoStatus('No SKILL.md files found in ' + owner + '/' + repo + '.', true);
+        return;
+      }
+      const items = skillPaths.map(sp => {
+        const info = skillFolderInfo(sp.path);
+        return { path: sp.path, name: info.folderName, category: info.category };
+      });
+      renderResults(items);
+      setRepoStatus(skillPaths.length + ' skills found' + (truncated ? ' (repo is large — list may be partial)' : '') + '. Click one to load it.', false);
+    } catch(err){
+      setRepoStatus(err.message, true);
+    }
+  }
+
+  function renderResults(items){
+    const results = el('results');
+    const catSelect = el('categorySelect');
+    results.innerHTML = '';
+    catSelect.innerHTML = '<option value="">All categories</option>';
+    const cats = Array.from(new Set(items.map(i => i.category).filter(Boolean))).sort();
+    cats.forEach(c => {
+      const opt = document.createElement('option'); opt.value = c; opt.textContent = c;
+      catSelect.appendChild(opt);
+    });
+
+    function draw(){
+      const filterText = el('filterBox').value.trim().toLowerCase();
+      const cat = catSelect.value;
+      results.innerHTML = '';
+      items.filter(i => {
+        if (cat && i.category !== cat) return false;
+        if (!filterText) return true;
+        return i.name.toLowerCase().includes(filterText) || (i.category||'').toLowerCase().includes(filterText);
+      }).forEach(i => {
+        const row = document.createElement('div');
+        row.className = 'result-item';
+        row.innerHTML = '<div><div class="name">' + i.name + '</div>' +
+          '<div class="desc">' + i.path + '</div></div>' +
+          (i.category ? '<span class="tag">' + i.category + '</span>' : '');
+        row.addEventListener('click', () => loadSkillFromResult(i.path, i.name));
+        results.appendChild(row);
+      });
+      if (!results.children.length){
+        results.innerHTML = '<div class="result-item"><div class="desc">No matches.</div></div>';
+      }
+    }
+    el('filterBox').oninput = draw;
+    catSelect.onchange = draw;
+    draw();
+    results.style.display = 'block';
+    el('repoFilterRow').style.display = 'flex';
+  }
+
+  async function loadSkillFromResult(skillMdPath, folderName){
+    setRepoStatus('Loading ' + folderName + '… ', false);
+    try{
+      const rawBase = 'https://raw.githubusercontent.com/' + state.owner + '/' + state.repo + '/' + state.branch + '/';
+      const res = await fetch(rawBase + skillMdPath);
+      if (!res.ok) throw new Error('Could not fetch ' + skillMdPath);
+      const raw = await res.text();
+      const { frontmatter, body } = parseSkillMd(raw);
+      const files = await fetchSkillFiles(state.owner, state.repo, state.branch, state.tree, skillMdPath);
+      renderManifest(state.owner + '/' + state.repo + ' — ' + skillMdPath, frontmatter, body, files);
+      setRepoStatus('Loaded ' + folderName + '.', false);
+    } catch(err){
+      setRepoStatus(err.message, true);
+    }
+  }
+
+  // ---------- direct load: paste ----------
+  function setDirectStatus(msg, isErr){
+    const n = el('directStatus');
+    n.textContent = msg;
+    n.className = 'status-msg' + (isErr ? ' err' : msg ? ' ok' : '');
+  }
+  el('parsePasteBtn').addEventListener('click', () => {
+    const raw = el('pasteArea').value;
+    if (!raw.trim()){ setDirectStatus('Paste a SKILL.md first.', true); return; }
+    try{
+      const { frontmatter, body } = parseSkillMd(raw);
+      renderManifest('pasted SKILL.md', frontmatter, body, []);
+      setDirectStatus('Parsed.', false);
+    } catch(err){
+      setDirectStatus(err.message, true);
+    }
+  });
+
+  // ---------- direct load: file / zip upload ----------
+  el('fileInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try{
+      if (file.name.toLowerCase().endsWith('.zip')){
+        const zip = await JSZip.loadAsync(file);
+        let skillEntry = null, shortestDepth = Infinity;
+        zip.forEach((relPath, entry) => {
+          if (!entry.dir && /(^|\/)SKILL\.md$/i.test(relPath)){
+            const depth = relPath.split('/').length;
+            if (depth < shortestDepth){ shortestDepth = depth; skillEntry = { relPath, entry }; }
+          }
+        });
+        if (!skillEntry) throw new Error('No SKILL.md found inside the zip.');
+        const prefix = skillEntry.relPath.slice(0, skillEntry.relPath.length - 'SKILL.md'.length);
+        const raw = await skillEntry.entry.async('text');
+        const { frontmatter, body } = parseSkillMd(raw);
+
+        const files = [];
+        const entries = [];
+        zip.forEach((relPath, entry) => { if (!entry.dir) entries.push({ relPath, entry }); });
+        for (const { relPath, entry } of entries){
+          if (relPath === skillEntry.relPath) continue;
+          if (prefix){
+            if (!relPath.startsWith(prefix)) continue;
+          } else if (relPath.includes('/')) {
+            continue; // SKILL.md at zip root — only take top-level files as siblings
+          }
+          const relToSkill = prefix ? relPath.slice(prefix.length) : relPath;
+          const { allowed, reason } = classifyFile(relToSkill);
+          if (!allowed){ files.push({ path: relToSkill, content:null, status:'dropped', reason }); continue; }
+          const text = await entry.async('text');
+          const warn = scanForNetworkCalls(text) ? 'script appears to call the network — Spark scripts can\u2019t reach external sites' : null;
+          files.push({ path: relToSkill, content:text, status: warn ? 'warn':'ok', reason: warn });
+        }
+        renderManifest('uploaded zip: ' + file.name, frontmatter, body, files);
+        setDirectStatus('Parsed ' + file.name + '.', false);
+      } else {
+        const raw = await file.text();
+        const { frontmatter, body } = parseSkillMd(raw);
+        renderManifest('uploaded file: ' + file.name, frontmatter, body, []);
+        setDirectStatus('Parsed ' + file.name + '.', false);
+      }
+    } catch(err){
+      setDirectStatus(err.message, true);
+    }
+  });
+
+  // ---------- manifest actions ----------
+  function copyToClipboard(text, btn){
+    navigator.clipboard.writeText(text).then(() => {
+      const old = btn.textContent; btn.textContent = 'Copied';
+      setTimeout(() => btn.textContent = old, 1200);
+    });
+  }
+  el('copyName').addEventListener('click', () => copyToClipboard(state.currentSkill.fixedName, el('copyName')));
+  el('copyDesc').addEventListener('click', () => copyToClipboard(state.currentSkill.description, el('copyDesc')));
+  el('copyInstr').addEventListener('click', () => copyToClipboard(state.currentSkill.instructions, el('copyInstr')));
+
+  el('clearBtn').addEventListener('click', () => {
+    state.currentSkill = null;
+    el('manifestCard').style.display = 'none';
+    document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
+  });
+
+  el('downloadBtn').addEventListener('click', async () => {
+    const skill = state.currentSkill;
+    if (!skill) return;
+    const zip = new JSZip();
+    const fmObj = { name: skill.fixedName, description: skill.description };
+    const fmYaml = jsyaml.dump(fmObj).trim();
+    const skillMdContent = '---\n' + fmYaml + '\n---\n\n' + skill.instructions + '\n';
+    zip.file('SKILL.md', skillMdContent);
+    skill.files.filter(f => f.status === 'ok' || f.status === 'warn').forEach(f => zip.file(f.path, f.content));
+    const blob = await zip.generateAsync({ type:'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = (skill.fixedName || 'skill') + '-spark.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+
+    const card = el('manifestCard');
+    document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
+    const seal = document.createElement('div');
+    seal.className = 'stamp-seal';
+    seal.textContent = 'CLEARED · SPARK';
+    card.appendChild(seal);
+  });
+
+  refreshRateLimit();
+})();
+</script>
+</body>
+</html>
