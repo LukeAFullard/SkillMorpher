@@ -1,0 +1,12 @@
+{
+  "name": "skillmorpher",
+  "version": "1.0.0",
+  "description": "SkillMorpher - clear Agent Skills for Gemini Spark",
+  "main": "index.html",
+  "scripts": {
+    "test": "node --test test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}

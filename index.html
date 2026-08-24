@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SkillMorpher — clear Agent Skills for Gemini Spark</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js" integrity="sha512-CSBhVREyzHAjAFfBlIBakjoRUKp5h7VSweP0InR/pAJyptH7peuhCsqAI/snV+TwZmXZqoUklpXp6R6wMnYf5Q==" crossorigin="anonymous"></script>
 <style>
   :root{
     --ink:#161D30;
@@ -261,7 +261,7 @@
     </div>
     <h1>SkillMorpher</h1>
     <p>Bring a <code>SKILL.md</code> skill — from a GitHub repo, a paste, or a zip — and get back exactly what's declared, what's dropped, and a zip ready to upload as a Gemini Spark skill.</p>
-    <p class="fine">Runs entirely in your browser. Nothing here is uploaded to a server — GitHub is queried directly from your device. See <a href="https://support.google.com/gemini/answer/17094296" target="_blank" rel="noopener">Google's Spark skill requirements</a> for reference.</p>
+    <p class="fine">Runs entirely in your browser. Nothing here is uploaded to a server — GitHub is queried directly from your device. See <a href="https://support.google.com/gemini/answer/17094296" target="_blank" rel="noopener">Google's Spark skill requirements</a> for reference. Note: Static heuristic analysis cannot guarantee that a skill is safe or fully compatible.</p>
   </header>
 
   <!-- ============ BROWSE ============ -->
@@ -341,7 +341,9 @@
     <label class="small">Files</label>
     <ul class="manifest" id="fileManifest"></ul>
 
-    <div style="margin-top:14px; display:flex; align-items:center; gap:8px;">
+    <div id="sizeInfo" style="font-size:12.5px; color:rgba(22,29,48,0.75); margin-top:10px;"></div>
+
+    <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
       <input type="checkbox" id="includeBlockedCheckbox">
       <label for="includeBlockedCheckbox" style="font-size:12.5px; color:rgba(22,29,48,0.75); cursor:pointer;">Include flagged secrets anyway (not recommended)</label>
     </div>
@@ -364,15 +366,30 @@
 
   const BUILT_IN_REPOS = [
     { label:'Anthropic (official)', owner:'anthropics', repo:'skills' },
-    { label:'OpenAI (official)', owner:'openai', repo:'skills' },
     { label:'Gemini API skills', owner:'google-gemini', repo:'gemini-skills' },
     { label:'Superpowers (community)', owner:'obra', repo:'superpowers' },
   ];
 
+  const MAX_ZIP_SIZE = 110 * 1024 * 1024; // 110 MB
+  const MAX_TOTAL_UNCOMPRESSED_SIZE = 100 * 1024 * 1024; // 100 MB (Spark limit)
+  const MAX_FILES = 500;
+  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+  const VALID_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
   const SPARK_ALLOWED_EXT = ['txt','md','rst','rtf','tex','log','py','sh','json','yaml','yml','csv','toml','xml','env','sql','html','css','svg'];
   const SPARK_ALLOWED_BASENAMES = ['makefile','dockerfile'];
   const JUNK_PATTERNS = [/(^|\/)\.DS_Store$/i, /\.pyc$/i, /(^|\/)__pycache__(\/|$)/i, /(^|\/)\.git\//i];
-  const NETWORK_HINTS = ['requests.get(','requests.post(','urllib','http.client','fetch(','curl ','axios','urlopen(','socket.connect'];
+
+  const NETWORK_PATTERNS = [
+    /\bimport\s+(requests|httpx|urllib|urllib3|aiohttp|socket|http\.client|subprocess)\b/i,
+    /\bfrom\s+(urllib|http|requests|httpx|aiohttp)\b/i,
+    /\b(requests\.(get|post|put|delete|patch|head|options|request)|urllib\.request\.urlopen)\b/i,
+    /\b(curl|wget)\b/i,
+    /\bfetch\s*\(/i,
+    /\b(axios|XMLHttpRequest|child_process)\b/i,
+    /\b(require|import)\s*\(?['"](http|https|undici|axios|node-fetch|got|request)['"]\)?/i,
+    /\bimport\s+.*\s+from\s*['"](http|https|undici|axios|node-fetch|got|request)['"]/i,
+  ];
 
   const CREDENTIAL_ENV_PATTERNS = [
     /\b[A-Z][A-Z0-9_]*_(API_KEY|ACCESS_TOKEN|SECRET_KEY|TOKEN|PASSWORD|PASSWD|CLIENT_SECRET)\b/,
@@ -426,8 +443,28 @@
 
   // ---------- helpers ----------
   function el(id){ return document.getElementById(id); }
+  function normalizePath(path) {
+    const parts = (path || '').split('/');
+    const stack = [];
+    for (const part of parts) {
+      if (!part || part === '.') continue;
+      if (part === '..') {
+        if (stack.length === 0) {
+          throw new Error('Path traversal');
+        }
+        stack.pop();
+      } else {
+        stack.push(part);
+      }
+    }
+    return stack.join('/');
+  }
   function sanitizeZipPath(p) {
-    return p.split('/').filter(seg => seg && seg !== '.' && seg !== '..').join('/');
+    try {
+      return normalizePath(p);
+    } catch (e) {
+      return p.split('/').filter(seg => seg && seg !== '.' && seg !== '..').join('/');
+    }
   }
   function lineOf(content, index){
     return content.slice(0, index).split('\n').length;
@@ -464,12 +501,21 @@
     return (name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
   }
   function scanForNetworkCalls(content){
-    return NETWORK_HINTS.some(h => content.includes(h));
+    return NETWORK_PATTERNS.some(re => re.test(content));
   }
   function parseSkillMd(raw){
     const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
     if (!match) throw new Error('No YAML frontmatter found — expected a --- block at the very top of the file.');
-    const frontmatter = jsyaml.load(match[1]) || {};
+    const frontmatter = jsyaml.load(match[1]);
+    if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) {
+      throw new Error('Invalid frontmatter — expected a YAML object/dictionary.');
+    }
+    if (frontmatter.name !== undefined && typeof frontmatter.name !== 'string') {
+      throw new Error('frontmatter field "name" must be a string');
+    }
+    if (frontmatter.description !== undefined && typeof frontmatter.description !== 'string') {
+      throw new Error('frontmatter field "description" must be a string');
+    }
     const body = match[2].trim();
     return { frontmatter, body };
   }
@@ -519,7 +565,25 @@
     const info = await ghFetch('https://api.github.com/repos/' + owner + '/' + repo);
     const branch = info.default_branch;
     const treeData = await ghFetch('https://api.github.com/repos/' + owner + '/' + repo + '/git/trees/' + branch + '?recursive=1');
-    return { branch, tree: treeData.tree, truncated: !!treeData.truncated };
+    let tree = treeData.tree || [];
+    let truncated = !!treeData.truncated;
+    if (truncated) {
+      const candidateTrees = tree.filter(item => item.type === 'tree');
+      for (const dirItem of candidateTrees) {
+        try {
+          const subData = await ghFetch('https://api.github.com/repos/' + owner + '/' + repo + '/git/trees/' + dirItem.sha + '?recursive=1');
+          if (subData.tree) {
+            subData.tree.forEach(subItem => {
+              const fullPath = dirItem.path + '/' + subItem.path;
+              if (!tree.some(t => t.path === fullPath)) {
+                tree.push({ ...subItem, path: fullPath });
+              }
+            });
+          }
+        } catch(e) { /* ignore subtree fetch error */ }
+      }
+    }
+    return { branch, tree, truncated };
   }
   function findSkillPaths(tree){
     return tree.filter(item => item.type === 'blob' && /(^|\/)SKILL\.md$/.test(item.path));
@@ -540,12 +604,35 @@
       if (!prefix) return !item.path.includes('/'); // SKILL.md at repo root — only take top-level files
       return item.path.startsWith(prefix);
     });
+    if (siblings.length > MAX_FILES) {
+      throw new Error(`Skill folder contains too many files (${siblings.length}, limit is ${MAX_FILES})`);
+    }
     const rawBase = 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/';
     const files = [];
+    const seenPaths = new Set();
+
     for (const blob of siblings){
       const relPath = blob.path.slice(prefix.length);
-      const cleanPath = sanitizeZipPath(relPath);
-      const pathAltered = cleanPath !== relPath;
+      let cleanPath, pathAltered = false;
+      try {
+        cleanPath = normalizePath(relPath);
+        pathAltered = cleanPath !== relPath;
+      } catch (err) {
+        files.push({ path: relPath, content: null, status: 'blocked', reason: 'path traversal detected (.. at root level)' });
+        continue;
+      }
+
+      if (!cleanPath) {
+        files.push({ path: relPath, content: null, status: 'blocked', reason: 'invalid or empty path' });
+        continue;
+      }
+
+      if (seenPaths.has(cleanPath)) {
+        files.push({ path: cleanPath, content: null, status: 'blocked', reason: `duplicate path collision for ${cleanPath}` });
+        continue;
+      }
+      seenPaths.add(cleanPath);
+
       const fileClass = classifyFile(cleanPath);
       if (!fileClass.allowed){ files.push({ path: cleanPath, content:null, status:'dropped', reason: fileClass.reason }); continue; }
       const res = await fetch(rawBase + blob.path);
@@ -579,13 +666,46 @@
   }
 
   // ---------- render: manifest ----------
+  function calculatePackageSize(skill, includeBlocked) {
+    if (!skill) return 0;
+    const name = skill.fixedName || 'unnamed-skill';
+    const desc = skill.description || '';
+    const fmYaml = (typeof jsyaml !== 'undefined' && jsyaml.dump)
+      ? jsyaml.dump({ name, description: desc }).trim()
+      : `name: ${name}\ndescription: ${desc}`;
+    const skillMdContent = '---\n' + fmYaml + '\n---\n\n' + (skill.instructions || '') + '\n';
+    let total = new TextEncoder().encode(skillMdContent).length;
+    (skill.files || []).forEach(f => {
+      if (f.content && (f.status === 'ok' || f.status === 'warn' || (includeBlocked && f.status === 'blocked'))) {
+        total += new TextEncoder().encode(f.content).length;
+      }
+    });
+    return total;
+  }
+
+  function updateSizeInfoDisplay(totalBytes) {
+    const mb = (totalBytes / (1024 * 1024)).toFixed(1);
+    const sizeEl = el('sizeInfo');
+    if (!sizeEl) return;
+    sizeEl.textContent = `Total package size: ${mb} MB / 100 MB`;
+    if (totalBytes > MAX_TOTAL_UNCOMPRESSED_SIZE) {
+      sizeEl.style.color = 'var(--red)';
+      sizeEl.textContent += ' ✕ EXCEEDS 100 MB SPARK LIMIT';
+    } else if (totalBytes > 80 * 1024 * 1024) {
+      sizeEl.style.color = 'var(--amber)';
+      sizeEl.textContent += ' ⚠ APPROACHING 100 MB SPARK LIMIT';
+    } else {
+      sizeEl.style.color = 'rgba(22,29,48,0.75)';
+    }
+  }
+
   function renderManifest(sourceLabel, frontmatter, body, files){
-    const name = (frontmatter && frontmatter.name) || '';
-    const desc = (frontmatter && frontmatter.description) || '';
+    const name = (frontmatter && typeof frontmatter.name === 'string') ? frontmatter.name : '';
+    const desc = (frontmatter && typeof frontmatter.description === 'string') ? frontmatter.description : '';
     const fixedName = toKebabCase(name);
     const nameNeedsFix = fixedName && fixedName !== name;
 
-    state.currentSkill = { sourceLabel, name, fixedName: fixedName || 'unnamed-skill', description: desc, instructions: body, files };
+    state.currentSkill = { sourceLabel, name, fixedName, description: desc, instructions: body, files };
 
     el('manifestSource').textContent = sourceLabel;
     el('nameValue').textContent = name || '(missing)';
@@ -596,12 +716,18 @@
     if (!name){
       fixNote.style.display = 'block';
       fixNote.textContent = 'No name found in frontmatter — required by Spark.';
+    } else if (!VALID_NAME_RE.test(fixedName)) {
+      fixNote.style.display = 'block';
+      fixNote.textContent = 'Invalid skill name: "' + name + '" — Spark requires lowercase, hyphen-separated alphanumeric names.';
     } else if (nameNeedsFix){
       fixNote.style.display = 'block';
       fixNote.textContent = 'Will be saved as "' + fixedName + '" — Spark requires lowercase, hyphen-separated names.';
     } else {
       fixNote.style.display = 'none';
     }
+
+    const includeBlocked = el('includeBlockedCheckbox').checked;
+    updateSizeInfoDisplay(calculatePackageSize(state.currentSkill, includeBlocked));
 
     const bodyCred = scanForCredentials(body + ' ' + desc, true);
     state.currentSkill.bodyKeyReference = bodyCred.hasKeyReference;
@@ -634,13 +760,29 @@
     el('includeBlockedCheckbox').checked = false;
 
     const list = el('fileManifest');
-    list.innerHTML = '';
+    list.textContent = '';
     const addRow = (path, status, why) => {
       const li = document.createElement('li');
       const tagClass = status === 'ok' ? 'ok' : status === 'warn' ? 'warn' : status === 'blocked' ? 'blocked' : 'drop';
       const tagText = status === 'ok' ? 'PACKED' : status === 'warn' ? 'CHECK' : status === 'blocked' ? 'BLOCKED' : 'DROPPED';
-      li.innerHTML = '<span class="path">' + path + (why ? ' <span class="why">— ' + why + '</span>' : '') + '</span>' +
-                      '<span class="stamp-tag ' + tagClass + '">' + tagText + '</span>';
+
+      const pathSpan = document.createElement('span');
+      pathSpan.className = 'path';
+      pathSpan.textContent = path;
+
+      if (why) {
+        const whySpan = document.createElement('span');
+        whySpan.className = 'why';
+        whySpan.textContent = ' — ' + why;
+        pathSpan.appendChild(whySpan);
+      }
+
+      const tagSpan = document.createElement('span');
+      tagSpan.className = 'stamp-tag ' + tagClass;
+      tagSpan.textContent = tagText;
+
+      li.appendChild(pathSpan);
+      li.appendChild(tagSpan);
       list.appendChild(li);
     };
 
@@ -710,8 +852,13 @@
     state.lastResultItems = items;
     const results = el('results');
     const catSelect = el('categorySelect');
-    results.innerHTML = '';
-    catSelect.innerHTML = '<option value="">All categories</option>';
+    results.textContent = '';
+    catSelect.textContent = '';
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = 'All categories';
+    catSelect.appendChild(defaultOpt);
+
     const cats = Array.from(new Set(items.map(i => i.category).filter(Boolean))).sort();
     cats.forEach(c => {
       const opt = document.createElement('option'); opt.value = c; opt.textContent = c;
@@ -721,7 +868,7 @@
     function draw(){
       const filterText = el('filterBox').value.trim().toLowerCase();
       const cat = catSelect.value;
-      results.innerHTML = '';
+      results.textContent = '';
       items.filter(i => {
         if (cat && i.category !== cat) return false;
         if (!filterText) return true;
@@ -731,19 +878,55 @@
       }).forEach(i => {
         const row = document.createElement('div');
         row.className = 'result-item';
-        const topicTags = (i.topics || []).map(t => '<span class="tag">' + t + '</span>').join('');
-        const auditTag = i.auditStatus
-          ? '<span class="stamp-tag ' + (i.auditStatus === 'ok' ? 'ok' : i.auditStatus === 'blocked' ? 'blocked' : 'warn') + '">' +
-            (i.auditStatus === 'ok' ? 'CLEAN' : i.auditStatus === 'blocked' ? 'SECRET' : 'CHECK') + '</span>'
-          : '';
-        row.innerHTML = '<div><div class="name">' + i.name + '</div>' +
-          '<div class="desc">' + i.path + (i.auditReason ? ' — ' + i.auditReason : '') + '</div></div>' +
-          '<div class="row" style="gap:6px;">' + (i.category ? '<span class="tag">' + i.category + '</span>' : '') + topicTags + auditTag + '</div>';
+
+        const leftCol = document.createElement('div');
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'name';
+        nameDiv.textContent = i.name;
+
+        const descDiv = document.createElement('div');
+        descDiv.className = 'desc';
+        descDiv.textContent = i.path + (i.auditReason ? ' — ' + i.auditReason : '');
+        leftCol.append(nameDiv, descDiv);
+
+        const rightCol = document.createElement('div');
+        rightCol.className = 'row';
+        rightCol.style.gap = '6px';
+
+        if (i.category) {
+          const catSpan = document.createElement('span');
+          catSpan.className = 'tag';
+          catSpan.textContent = i.category;
+          rightCol.appendChild(catSpan);
+        }
+
+        (i.topics || []).forEach(t => {
+          const topicSpan = document.createElement('span');
+          topicSpan.className = 'tag';
+          topicSpan.textContent = t;
+          rightCol.appendChild(topicSpan);
+        });
+
+        if (i.auditStatus) {
+          const auditSpan = document.createElement('span');
+          auditSpan.className = 'stamp-tag ' + (i.auditStatus === 'ok' ? 'ok' : i.auditStatus === 'blocked' ? 'blocked' : 'warn');
+          auditSpan.textContent = i.auditStatus === 'ok' ? 'CLEAN' : i.auditStatus === 'blocked' ? 'SECRET' : 'CHECK';
+          rightCol.appendChild(auditSpan);
+        }
+
+        row.appendChild(leftCol);
+        row.appendChild(rightCol);
         row.addEventListener('click', () => loadSkillFromResult(i.path, i.name));
         results.appendChild(row);
       });
       if (!results.children.length){
-        results.innerHTML = '<div class="result-item"><div class="desc">No matches.</div></div>';
+        const emptyRow = document.createElement('div');
+        emptyRow.className = 'result-item';
+        const descDiv = document.createElement('div');
+        descDiv.className = 'desc';
+        descDiv.textContent = 'No matches.';
+        emptyRow.appendChild(descDiv);
+        results.appendChild(emptyRow);
       }
     }
     state.redrawResults = draw;
@@ -818,27 +1001,51 @@
   });
 
   // ---------- direct load: file / zip upload ----------
+  el('includeBlockedCheckbox').addEventListener('change', () => {
+    if (state.currentSkill) {
+      updateSizeInfoDisplay(calculatePackageSize(state.currentSkill, el('includeBlockedCheckbox').checked));
+    }
+  });
+
   el('fileInput').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     try{
       if (file.name.toLowerCase().endsWith('.zip')){
+        if (file.size > MAX_ZIP_SIZE) {
+          throw new Error('ZIP archive exceeds maximum size limit (110 MB)');
+        }
         const zip = await JSZip.loadAsync(file);
+
+        const entries = [];
+        zip.forEach((relPath, entry) => { if (!entry.dir) entries.push({ relPath, entry }); });
+
+        if (entries.length > MAX_FILES) {
+          throw new Error(`ZIP archive contains too many files (${entries.length} files, limit is ${MAX_FILES})`);
+        }
+
         let skillEntry = null, shortestDepth = Infinity;
-        zip.forEach((relPath, entry) => {
-          if (!entry.dir && /(^|\/)SKILL\.md$/i.test(relPath)){
-            const depth = relPath.split('/').length;
-            if (depth < shortestDepth){ shortestDepth = depth; skillEntry = { relPath, entry }; }
+        for (const item of entries) {
+          if (/(^|\/)SKILL\.md$/i.test(item.relPath)) {
+            const depth = item.relPath.split('/').length;
+            if (depth < shortestDepth) { shortestDepth = depth; skillEntry = item; }
           }
-        });
+        }
         if (!skillEntry) throw new Error('No SKILL.md found inside the zip.');
+
         const prefix = skillEntry.relPath.slice(0, skillEntry.relPath.length - 'SKILL.md'.length);
         const raw = await skillEntry.entry.async('text');
+        let totalUncompressedBytes = new TextEncoder().encode(raw).length;
+
+        if (totalUncompressedBytes > MAX_FILE_SIZE) {
+          throw new Error('SKILL.md exceeds maximum individual file size limit (50 MB)');
+        }
+
         const { frontmatter, body } = parseSkillMd(raw);
 
         const files = [];
-        const entries = [];
-        zip.forEach((relPath, entry) => { if (!entry.dir) entries.push({ relPath, entry }); });
+        const seenPaths = new Set();
+
         for (const { relPath, entry } of entries){
           if (relPath === skillEntry.relPath) continue;
           if (prefix){
@@ -847,11 +1054,41 @@
             continue; // SKILL.md at zip root — only take top-level files as siblings
           }
           const relToSkill = prefix ? relPath.slice(prefix.length) : relPath;
-          const cleanPath = sanitizeZipPath(relToSkill);
-          const pathAltered = cleanPath !== relToSkill;
+          let cleanPath, pathAltered = false;
+          try {
+            cleanPath = normalizePath(relToSkill);
+            pathAltered = cleanPath !== relToSkill;
+          } catch (err) {
+            files.push({ path: relToSkill, content: null, status: 'blocked', reason: 'path traversal detected (.. at root level)' });
+            continue;
+          }
+
+          if (!cleanPath) {
+            files.push({ path: relToSkill, content: null, status: 'blocked', reason: 'invalid or empty path' });
+            continue;
+          }
+
+          if (seenPaths.has(cleanPath)) {
+            files.push({ path: cleanPath, content: null, status: 'blocked', reason: `duplicate path collision for ${cleanPath}` });
+            continue;
+          }
+          seenPaths.add(cleanPath);
+
           const fileClass = classifyFile(cleanPath);
           if (!fileClass.allowed){ files.push({ path: cleanPath, content:null, status:'dropped', reason: fileClass.reason }); continue; }
+
           const text = await entry.async('text');
+          const entryBytes = new TextEncoder().encode(text).length;
+
+          if (entryBytes > MAX_FILE_SIZE) {
+            throw new Error(`File ${cleanPath} exceeds maximum individual file size limit (50 MB)`);
+          }
+
+          totalUncompressedBytes += entryBytes;
+          if (totalUncompressedBytes > MAX_TOTAL_UNCOMPRESSED_SIZE) {
+            throw new Error('ZIP uncompressed content exceeds maximum total size limit (100 MB)');
+          }
+
           const netWarn = scanForNetworkCalls(text);
           const cred = scanForCredentials(text);
           const isEnvFile = cleanPath.toLowerCase().endsWith('.env');
@@ -913,7 +1150,29 @@
     const skill = state.currentSkill;
     if (!skill) return;
 
+    if (!skill.name) {
+      const ds = el('downloadStatus');
+      ds.textContent = 'Download blocked — SKILL.md requires a name.';
+      ds.style.display = 'block';
+      return;
+    }
+
+    if (!skill.fixedName || !VALID_NAME_RE.test(skill.fixedName)) {
+      const ds = el('downloadStatus');
+      ds.textContent = 'Download blocked — invalid skill name. Name must be lowercase-hyphenated.';
+      ds.style.display = 'block';
+      return;
+    }
+
     const includeBlocked = el('includeBlockedCheckbox').checked;
+    const totalBytes = calculatePackageSize(skill, includeBlocked);
+    if (totalBytes > MAX_TOTAL_UNCOMPRESSED_SIZE) {
+      const ds = el('downloadStatus');
+      ds.textContent = `Download blocked — skill package size (${(totalBytes / (1024*1024)).toFixed(1)} MB) exceeds Spark's 100 MB limit.`;
+      ds.style.display = 'block';
+      return;
+    }
+
     if (skill.bodySecrets && skill.bodySecrets.length && !includeBlocked) {
       const ds = el('downloadStatus');
       ds.textContent = 'Download blocked — instructions contain what looks like a real secret. Remove it, or check "include flagged secrets anyway."';
@@ -934,7 +1193,7 @@
     const blob = await zip.generateAsync({ type:'blob' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = (skill.fixedName || 'skill') + '-spark.zip';
+    a.href = url; a.download = skill.fixedName + '-spark.zip';
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
 
@@ -942,7 +1201,7 @@
     document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
     const seal = document.createElement('div');
     seal.className = 'stamp-seal' + (shippedBlocked ? ' stamp-seal-warn' : '');
-    seal.textContent = shippedBlocked ? 'INCLUDES FLAGGED SECRETS' : 'CLEARED · SPARK';
+    seal.textContent = shippedBlocked ? 'INCLUDES FLAGGED SECRETS' : 'HEURISTIC SCAN PASSED';
     card.appendChild(seal);
   });
 
