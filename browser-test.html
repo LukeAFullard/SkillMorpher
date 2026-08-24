@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkillMorpher — Gemma 4 Browser Verification Suite</title>
+<script src="https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js" crossorigin="anonymous"></script>
+<script src="src/platform-detector.js"></script>
+<script src="src/capabilities.js"></script>
+<script src="src/targets.js"></script>
+<script src="src/platforms/gemini-spark.js"></script>
+<script src="src/resource-graph.js"></script>
+<script src="src/script-analyzer.js"></script>
+<script src="src/description-validator.js"></script>
+<script src="src/validator.js"></script>
+<script src="src/providers/browser-local-provider.js"></script>
+<script src="src/providers/index.js"></script>
+<script src="src/translator.js"></script>
+<script src="src/benchmark-corpus.js"></script>
+
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --heading: #f0f6fc;
+    --green: #238636;
+    --green-light: #3fb950;
+    --red: #da3633;
+    --amber: #d29922;
+    --mono: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    margin: 0;
+    padding: 24px;
+    line-height: 1.5;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 { color: var(--heading); font-size: 24px; margin-bottom: 8px; }
+  p.sub { color: #8b949e; font-size: 14px; margin-top: 0; margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 16px; color: var(--heading); margin-top: 0; margin-bottom: 12px; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge.pass { background: rgba(35,134,54,0.2); color: var(--green-light); border: 1px solid var(--green-light); }
+  .badge.fail { background: rgba(218,54,51,0.2); color: #f85149; border: 1px solid #f85149; }
+  .badge.pending { background: rgba(210,153,34,0.2); color: var(--amber); border: 1px solid var(--amber); }
+  button {
+    background: var(--green);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button:hover { background: #2ea043; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  pre {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    padding: 12px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    overflow-x: auto;
+    color: #e6edf3;
+  }
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .metric-box {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 12px;
+  }
+  .metric-box .label { color: #8b949e; text-transform: uppercase; font-size: 10px; font-weight: 700; }
+  .metric-box .val { font-size: 16px; font-weight: 700; color: var(--heading); margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Gemma 4 Browser Verification Suite</h1>
+  <p class="sub">WebGPU → Load E2B → Generate & Validate JSON → Load E4B → Generate & Validate JSON</p>
+
+  <div class="card">
+    <h2>1. Environment & Hardware Support</h2>
+    <div id="hwStatus"><span class="badge pending">Checking...</span></div>
+    <div id="hwDetails" style="font-size:12px; color:#8b949e; margin-top:8px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Test Controls</h2>
+    <button id="runAllBtn">Run Full Gemma 4 Verification Suite</button>
+  </div>
+
+  <div class="card" id="e2bCard">
+    <h2>3. Gemma 4 E2B IT Verification</h2>
+    <div>Status: <span id="e2bStatus" class="badge pending">Idle</span></div>
+    <div class="metric-grid">
+      <div class="metric-box"><div class="label">Load Time</div><div class="val" id="e2bLoadTime">—</div></div>
+      <div class="metric-box"><div class="label">Gen Time</div><div class="val" id="e2bGenTime">—</div></div>
+      <div class="metric-box"><div class="label">JSON Valid</div><div class="val" id="e2bJsonValid">—</div></div>
+    </div>
+    <div style="margin-top:12px;">Output:</div>
+    <pre id="e2bOutput">Waiting to run...</pre>
+  </div>
+
+  <div class="card" id="e4bCard">
+    <h2>4. Gemma 4 E4B IT Verification</h2>
+    <div>Status: <span id="e4bStatus" class="badge pending">Idle</span></div>
+    <div class="metric-grid">
+      <div class="metric-box"><div class="label">Load Time</div><div class="val" id="e4bLoadTime">—</div></div>
+      <div class="metric-box"><div class="label">Gen Time</div><div class="val" id="e4bGenTime">—</div></div>
+      <div class="metric-box"><div class="label">JSON Valid</div><div class="val" id="e4bJsonValid">—</div></div>
+    </div>
+    <div style="margin-top:12px;">Output:</div>
+    <pre id="e4bOutput">Waiting to run...</pre>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+  const provider = new BrowserLocalProvider();
+
+  async function checkHw() {
+    const hw = await provider.checkHardwareSupport();
+    const statusEl = document.getElementById('hwStatus');
+    const detailsEl = document.getElementById('hwDetails');
+
+    if (hw.supported) {
+      statusEl.innerHTML = `<span class="badge pass">✓ WebGPU Supported (${hw.status})</span>`;
+      detailsEl.textContent = `Adapter: ${hw.adapterInfo ? hw.adapterInfo.description || hw.adapterInfo.vendor : 'Generic WebGPU'} | Recommended: ${hw.recommendedModel}`;
+    } else {
+      statusEl.innerHTML = `<span class="badge fail">✕ WebGPU Unsupported</span>`;
+      detailsEl.textContent = hw.reason;
+    }
+    return hw;
+  }
+
+  const sampleSkill = {
+    instructions: 'Use the Bash tool to inspect workspace files and use `str_replace` to edit config.',
+    description: 'Edits workspace files.'
+  };
+
+  async function testModel(modelId, statusEl, loadTimeEl, genTimeEl, jsonValidEl, outputEl) {
+    statusEl.className = 'badge pending';
+    statusEl.textContent = 'Loading model...';
+
+    const t0 = performance.now();
+    try {
+      await provider.loadModel(modelId, (report) => {
+        if (report && report.text) outputEl.textContent = report.text;
+      });
+      const t1 = performance.now();
+      const loadSecs = ((t1 - t0) / 1000).toFixed(2) + 's';
+      loadTimeEl.textContent = loadSecs;
+
+      statusEl.textContent = 'Generating text...';      outputEl.textContent = 'Running inference...';
+
+      const gen0 = performance.now();
+      const res = await provider.translate({ skill: sampleSkill, model: modelId });
+      const gen1 = performance.now();
+
+      const genSecs = ((gen1 - gen0) / 1000).toFixed(2) + 's';
+      genTimeEl.textContent = genSecs;
+
+      if (res && res.translatedBody) {
+        jsonValidEl.textContent = 'PASS';
+        jsonValidEl.style.color = 'var(--green-light)';
+        statusEl.className = 'badge pass';
+        statusEl.textContent = '✓ SUCCESS';
+        outputEl.textContent = JSON.stringify(res, null, 2);
+      } else {
+        jsonValidEl.textContent = 'FAIL';
+        jsonValidEl.style.color = 'var(--red)';
+        statusEl.className = 'badge fail';
+        statusEl.textContent = '✕ INVALID OUTPUT';
+        outputEl.textContent = JSON.stringify(res, null, 2);
+      }
+    } catch (err) {
+      statusEl.className = 'badge fail';
+      statusEl.textContent = '✕ ERROR';
+      outputEl.textContent = err.message + '\n' + err.stack;
+      jsonValidEl.textContent = 'FAIL';
+      jsonValidEl.style.color = 'var(--red)';
+    } finally {
+      await provider.unloadModel();
+    }
+  }
+
+  document.getElementById('runAllBtn').addEventListener('click', async () => {
+    const hw = await checkHw();
+    if (!hw.supported) {
+      alert('WebGPU is not supported in this environment: ' + hw.reason);
+      return;
+    }
+
+    document.getElementById('runAllBtn').disabled = true;
+
+    // Run E2B
+    await testModel(
+      'gemma-4-e2b-it-webgpu',
+      document.getElementById('e2bStatus'),
+      document.getElementById('e2bLoadTime'),
+      document.getElementById('e2bGenTime'),
+      document.getElementById('e2bJsonValid'),
+      document.getElementById('e2bOutput')
+    );
+
+    // Run E4B
+    await testModel(
+      'gemma-4-e4b-it-webgpu',
+      document.getElementById('e4bStatus'),
+      document.getElementById('e4bLoadTime'),
+      document.getElementById('e4bGenTime'),
+      document.getElementById('e4bJsonValid'),
+      document.getElementById('e4bOutput')
+    );
+
+    document.getElementById('runAllBtn').disabled = false;
+  });
+
+  checkHw();
+})();
+</script>
+</body>
+</html>

@@ -12,8 +12,9 @@
   const MODELS = [
     {
       id: 'gemma-4-e2b-it-webgpu',
+      hfRepo: 'onnx-community/gemma-4-e2b-it-ONNX',
       name: 'Gemma 4 E2B IT (Edge / Fast)',
-      runtime: 'WebLLM / ONNX WebGPU',
+      runtime: 'Transformers.js / ONNX WebGPU',
       size: '1.1 GB',
       sizeBytes: 1.1 * 1024 * 1024 * 1024,
       context: '128K',
@@ -23,8 +24,9 @@
     },
     {
       id: 'gemma-4-e4b-it-webgpu',
+      hfRepo: 'onnx-community/gemma-4-e4b-it-ONNX',
       name: 'Gemma 4 E4B IT (Edge / Higher Quality)',
-      runtime: 'WebLLM / ONNX WebGPU',
+      runtime: 'Transformers.js / ONNX WebGPU',
       size: '2.2 GB',
       sizeBytes: 2.2 * 1024 * 1024 * 1024,
       context: '128K',
@@ -39,6 +41,7 @@
       this.id = 'browser-local';
       this.name = 'Browser Local Model (Gemma 4 WebGPU)';
       this.loadedEngine = null;
+      this.loadedPipeline = null;
       this.currentModelId = null;
       this.isModelLoading = false;
     }
@@ -49,7 +52,7 @@
 
     getStatus() {
       return {
-        loaded: !!this.loadedEngine,
+        loaded: !!(this.loadedEngine || this.loadedPipeline),
         currentModelId: this.currentModelId || null,
         provider: this.id
       };
@@ -113,8 +116,25 @@
         return false;
       }
       try {
+        const modelMeta = MODELS.find(m => m.id === modelId);
+        const searchTerms = [modelId, 'transformers-cache', 'onnx-community'];
+        if (modelMeta && modelMeta.hfRepo) {
+          searchTerms.push(modelMeta.hfRepo.replace('/', '_'));
+        }
+
         const cacheNames = await caches.keys();
-        return cacheNames.some(name => name.includes(modelId) || name.includes('webllm'));
+        for (const cacheName of cacheNames) {
+          const cache = await caches.open(cacheName);
+          const requests = await cache.keys();
+          if (requests.length === 0) continue;
+
+          for (const req of requests) {
+            if (searchTerms.some(term => req.url.includes(term))) {
+              return true;
+            }
+          }
+        }
+        return false;
       } catch (e) {
         return false;
       }
@@ -123,12 +143,26 @@
     async clearCache(modelId) {
       if (typeof caches === 'undefined') return false;
       try {
+        const modelMeta = MODELS.find(m => m.id === modelId);
+        const searchTerms = modelId
+          ? [modelId, ...(modelMeta ? [modelMeta.hfRepo.replace('/', '_')] : [])]
+          : ['transformers-cache', 'onnx-community', 'gemma-4'];
+
         const cacheNames = await caches.keys();
         let cleared = false;
         for (const name of cacheNames) {
-          if (!modelId || name.includes(modelId) || name.includes('webllm')) {
+          if (searchTerms.some(term => name.includes(term))) {
             await caches.delete(name);
             cleared = true;
+          } else {
+            const cache = await caches.open(name);
+            const requests = await cache.keys();
+            for (const req of requests) {
+              if (searchTerms.some(term => req.url.includes(term))) {
+                await cache.delete(req);
+                cleared = true;
+              }
+            }
           }
         }
         return cleared;
@@ -138,12 +172,14 @@
     }
 
     async unloadModel() {
-      if (this.loadedEngine) {
-        if (typeof this.loadedEngine.unload === 'function') {
-          await this.loadedEngine.unload();
-        }
-        this.loadedEngine = null;
+      if (this.loadedEngine && typeof this.loadedEngine.dispose === 'function') {
+        await this.loadedEngine.dispose();
       }
+      if (this.loadedPipeline && typeof this.loadedPipeline.dispose === 'function') {
+        await this.loadedPipeline.dispose();
+      }
+      this.loadedEngine = null;
+      this.loadedPipeline = null;
       this.currentModelId = null;
       return true;
     }
@@ -160,7 +196,7 @@
         description: skill.description || ''
       };
 
-      return `You are a Gemma 4 Agent Skill Translator running locally in the browser via WebGPU.
+      return `You are a Gemma 4 Agent Skill Translator running locally in the browser via Transformers.js / WebGPU.
 Translate the provided Agent Skill instructions to be functionally equivalent for ${target}.
 
 Deterministic Context Payload:
@@ -205,21 +241,29 @@ Return ONLY valid JSON with the following exact schema:
         throw new Error(hw.reason);
       }
 
+      const modelMeta = MODELS.find(m => m.id === modelId) || MODELS[0];
+
       this.isModelLoading = true;
       try {
         const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
-        if (globalObj && globalObj.webllm) {
-          const engine = await globalObj.webllm.CreateMLCEngine(modelId, {
-            initProgressCallback: (report) => {
-              if (progressCallback) progressCallback(report);
+        const transformers = globalObj.transformers || globalObj.Transformers;
+
+        if (transformers && typeof transformers.pipeline === 'function') {
+          const pipe = await transformers.pipeline('text-generation', modelMeta.hfRepo, {
+            device: 'webgpu',
+            progress_callback: (report) => {
+              if (progressCallback) {
+                const statusText = report.status ? `${report.status}: ${report.file || ''} (${report.progress ? Math.round(report.progress) + '%' : ''})` : JSON.stringify(report);
+                progressCallback({ ...report, text: statusText });
+              }
             }
           });
-          this.loadedEngine = engine;
+          this.loadedPipeline = pipe;
           this.currentModelId = modelId;
-          return engine;
+          return pipe;
         }
 
-        // Mock engine fallback when webllm global is not present in test/light mode
+        // Fallback for mock/test environments where transformers global is not present
         this.currentModelId = modelId;
         return null;
       } finally {
@@ -231,24 +275,26 @@ Return ONLY valid JSON with the following exact schema:
       const prompt = this.buildStructuredPrompt({ skill, analysis, target });
 
       const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
-      if (globalObj && globalObj.webllm && !this.loadedEngine) {
+      const transformers = globalObj.transformers || globalObj.Transformers;
+
+      if (transformers && !this.loadedPipeline) {
         await this.loadModel(model, progressCallback);
       }
 
-      if (this.loadedEngine) {
+      if (this.loadedPipeline) {
         const messages = [
           { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
           { role: 'user', content: prompt }
         ];
 
-        const response = await this.loadedEngine.chat.completions.create({
-          messages,
-          response_format: { type: 'json_object' }
+        const output = await this.loadedPipeline(messages, {
+          max_new_tokens: 1024,
+          temperature: 0.1,
+          return_full_text: false
         });
 
-        const rawContent = response.choices[0]?.message?.content || '';
-        // Sanitize markdown fences or extra whitespace around JSON output
-        let cleanContent = rawContent.trim();
+        const rawContent = Array.isArray(output) ? (output[0]?.generated_text || output[0]?.text || '') : (output?.generated_text || output?.text || '');
+        let cleanContent = String(rawContent).trim();
         if (cleanContent.startsWith('```')) {
           cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
         }
@@ -272,7 +318,7 @@ Return ONLY valid JSON with the following exact schema:
         };
       }
 
-      throw new Error('WebLLM runtime unavailable in environment');
+      throw new Error('Transformers.js runtime unavailable in environment');
     }
   }
 
