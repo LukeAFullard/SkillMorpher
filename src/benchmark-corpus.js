@@ -15,7 +15,7 @@
       category: 'Claude',
       name: 'claude-file-editor',
       description: 'Edits files using Claude tool conventions.',
-      instructions: 'Use the Bash tool to inspect files in /mnt/skills/.\nUse `str_replace` to update target lines.',
+      instructions: 'When editing code files in the repository, use the Bash tool to inspect files in /mnt/skills/. Always use `str_replace` to update target lines in existing source files.',
       files: [],
       expectedPlatform: 'Anthropic',
       expectedNeedsTranslation: true
@@ -25,7 +25,7 @@
       category: 'OpenAI/Codex',
       name: 'openai-data-analyst',
       description: 'Processes datasets via OpenAI runtime.',
-      instructions: 'Run Code Interpreter to summarize data.\nUse chatgpt and Assistants API to format results.',
+      instructions: 'Analyze structured dataset files using Code Interpreter. Execute Python data analysis scripts to summarize metrics and format results using ChatGPT and OpenAI Assistants API schemas.',
       files: [],
       expectedPlatform: 'OpenAI',
       expectedNeedsTranslation: true
@@ -99,7 +99,7 @@
       category: 'Claude',
       name: 'claude-str-replace-refactor',
       description: 'Refactors code using Claude str_replace tool.',
-      instructions: 'Inspect `/mnt/data/src/main.js` and use `str_replace` to replace legacy functions.',
+      instructions: 'Inspect source code files in /mnt/data/src/ and use `str_replace` to modify existing function signatures.',
       files: [],
       expectedPlatform: 'Anthropic',
       expectedNeedsTranslation: true
@@ -109,7 +109,7 @@
       category: 'OpenAI/Codex',
       name: 'openai-code-interpreter-plot',
       description: 'Generates chart plots using OpenAI code interpreter.',
-      instructions: 'Use code_interpreter to read CSV file and generate PNG chart plot.',
+      instructions: 'Read CSV data files and generate chart plots by executing Python scripts in `code_interpreter` environment.',
       files: [],
       expectedPlatform: 'OpenAI',
       expectedNeedsTranslation: true
@@ -129,7 +129,7 @@
       category: 'Tool-heavy',
       name: 'bash-heavy-git-workflow',
       description: 'Performs complex git branch inspections and rebase helpers.',
-      instructions: 'Use Bash tool to run `git status`, `git log --oneline`, and `git diff`.',
+      instructions: 'Execute git version control workflows using the Bash tool to inspect commit history (`git log --oneline`), check working tree status (`git status`), and view modified lines (`git diff`).',
       files: [],
       expectedPlatform: 'Anthropic',
       expectedNeedsTranslation: true
@@ -226,7 +226,7 @@
       category: 'Claude',
       name: 'claude-computer-tool-automation',
       description: 'Performs desktop UI interaction via Claude computer tool.',
-      instructions: 'Use `computer` tool to take screenshot and click application icon.',
+      instructions: 'To interact with desktop application user interfaces, use the `computer` tool to capture screenshots and perform mouse click actions.',
       files: [],
       expectedPlatform: 'Anthropic',
       expectedNeedsTranslation: true
@@ -236,7 +236,7 @@
       category: 'OpenAI/Codex',
       name: 'openai-assistants-file-search',
       description: 'Searches uploaded document files using OpenAI file_search tool.',
-      instructions: 'Use file_search tool to query policy PDF documents in vector store.',
+      instructions: 'Query policy PDF documents uploaded to the vector store by invoking the `file_search` tool function.',
       files: [],
       expectedPlatform: 'OpenAI',
       expectedNeedsTranslation: true
