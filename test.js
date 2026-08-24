@@ -65,7 +65,9 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'downloadModelBtn',
     'clearCacheBtn',
     'modelSpecsInfo',
-    'modelTestStatus'
+    'modelTestStatus',
+    'webgpuModal',
+    'closeWebgpuModalBtn'
   ];
 
   for (const id of expectedIds) {
