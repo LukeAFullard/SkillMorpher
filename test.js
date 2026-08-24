@@ -207,12 +207,25 @@ test('Translator AI prompt generation and unconfigured/offline fallback handling
   assert.ok(fallbackRes.translatedBody.includes('Inspect the repository files available to you'));
 });
 
-test('BrowserLocalProvider structured prompt formatting and hardware checking', async () => {
+test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting and hardware checking', async () => {
   const provider = new BrowserLocalProvider();
+  const models = BrowserLocalProvider.getModels();
+
+  assert.strictEqual(models.length, 5);
+  const defaultModel = models.find(m => m.recommended);
+  assert.ok(defaultModel);
+  assert.strictEqual(defaultModel.id, 'gemma-4-12b-it-webgpu');
+  assert.strictEqual(defaultModel.context, '256K');
+
+  const e2b = models.find(m => m.id === 'gemma-4-e2b-it-webgpu');
+  assert.ok(e2b);
+  assert.strictEqual(e2b.context, '128K');
+
   const skill = { instructions: 'Use the Bash tool to check code.', description: 'Test skill' };
   const analysis = { gemini: { sourcePlatform: 'anthropic' }, capabilities: ['shellExecution'] };
 
   const structuredPrompt = provider.buildStructuredPrompt({ skill, analysis, target: 'gemini-spark' });
+  assert.ok(structuredPrompt.includes('Gemma 4 Agent Skill Translator'));
   assert.ok(structuredPrompt.includes('"source_platform": "anthropic"'));
   assert.ok(structuredPrompt.includes('"translated_skill_md"'));
 
@@ -221,7 +234,7 @@ test('BrowserLocalProvider structured prompt formatting and hardware checking', 
   assert.strictEqual(hw.status, 'UNSUPPORTED');
 });
 
-test('Translator translateWithProvider routing and fallback behavior', async () => {
+test('Translator translateWithProvider routing and fallback behavior for Gemma 4', async () => {
   const skill = { instructions: 'Use the Bash tool to inspect the repository.', description: 'Test' };
 
   // Mock failing provider (e.g. browser without WebGPU / WebLLM)
@@ -229,7 +242,7 @@ test('Translator translateWithProvider routing and fallback behavior', async () 
 
   const resFailing = await Translator.translateWithProvider({
     provider: failingProvider,
-    model: 'gemma-2-2b-it-webgpu',
+    model: 'gemma-4-12b-it-webgpu',
     skill,
     targetKey: 'geminiSpark'
   });
@@ -250,14 +263,14 @@ test('Translator translateWithProvider routing and fallback behavior', async () 
 
   const resSuccess = await Translator.translateWithProvider({
     provider: successProvider,
-    model: 'gemma-2-2b-it-webgpu',
+    model: 'gemma-4-12b-it-webgpu',
     skill,
     targetKey: 'geminiSpark'
   });
 
   assert.strictEqual(resSuccess.mode, 'provider');
   assert.strictEqual(resSuccess.providerId, 'browser-local');
-  assert.strictEqual(resSuccess.model, 'gemma-2-2b-it-webgpu');
+  assert.strictEqual(resSuccess.model, 'gemma-4-12b-it-webgpu');
 });
 
 test('Credential scanning, platform jargon detection, extractTopics, and path sanitization helper functions', () => {
@@ -749,7 +762,7 @@ test('End-to-End Pipeline on 8 Real Test Skills (Import -> Analyse -> Local Tran
     const provider = new BrowserLocalProvider();
     const transRes = await Translator.translateWithProvider({
       provider,
-      model: 'gemma-2-2b-it-webgpu',
+      model: 'gemma-4-12b-it-webgpu',
       skill: {
         instructions: rawSkill.instructions,
         description: rawSkill.description

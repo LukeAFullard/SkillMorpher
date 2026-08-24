@@ -311,14 +311,14 @@
     <label class="small">Provider</label>
     <div class="row" style="margin-bottom:10px;">
       <select id="providerSelect">
-        <option value="browser-local" selected>Browser Local Model (WebGPU / WebLLM)</option>
+        <option value="browser-local" selected>Browser Local Model (Gemma 4 WebGPU)</option>
         <option value="deterministic">Deterministic Engine Only (Offline / Rule-Based)</option>
       </select>
       <span id="gpuStatusBadge" class="stamp-tag warn">Checking WebGPU...</span>
     </div>
 
     <div id="localModelBox">
-      <label class="small">Local Model</label>
+      <label class="small">Local Gemma 4 Model Ladder</label>
       <div class="row" style="margin-bottom:8px;">
         <select id="localModelSelect"></select>
         <button id="downloadModelBtn" class="ghost">Check / Download Model</button>
@@ -966,6 +966,7 @@
       const opt = document.createElement('option');
       opt.value = m.id;
       opt.textContent = `${m.name} (${m.size})`;
+      if (m.recommended) opt.selected = true;
       select.appendChild(opt);
     });
 
@@ -988,7 +989,6 @@
     const models = BrowserLocalProvider ? BrowserLocalProvider.getModels() : [];
     const spec = models.find(m => m.id === modelId);
     const specsEl = el('modelSpecsInfo');
-    const statusEl = el('modelTestStatus');
 
     if (spec) {
       const isCached = localProviderInstance ? await localProviderInstance.checkCache(modelId) : false;
