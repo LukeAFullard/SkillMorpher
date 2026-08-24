@@ -144,7 +144,7 @@ test('Credential scanning, platform jargon detection, extractTopics, and path sa
   assert.strictEqual(sanitized, 'evil.js');
 
   const sanitizedNested = sanitizeZipPath('foo/../bar/./baz/../../evil.js');
-  assert.strictEqual(sanitizedNested, 'foo/bar/baz/evil.js');
+  assert.strictEqual(sanitizedNested, 'evil.js');
 
   // Test extractTopics keyword matching
   assert.deepStrictEqual(extractTopics('excel-data-exporter spreadsheets'), ['spreadsheets', 'data']);
@@ -172,13 +172,30 @@ test('renderManifest and body credential scanning state/UI behavior', () => {
       classes: new Set(),
       children: [],
       _innerHTML: '',
-      get innerHTML() { return this._innerHTML; },
+      get innerHTML() {
+        if (this._innerHTML) return this._innerHTML;
+        const classStr = Array.from(this.classes).join(' ');
+        const attrStr = classStr ? ` class="${classStr}"` : '';
+        const childStr = this.children.length
+          ? this.children.map(c => c.innerHTML || c.textContent || '').join('')
+          : (this.textContent || '');
+        return classStr || this.children.length ? `<span${attrStr}>${childStr}</span>` : childStr;
+      },
       set innerHTML(val) {
         this._innerHTML = val;
         if (val === '') this.children = [];
       },
+      get className() { return Array.from(this.classes).join(' '); },
+      set className(val) {
+        this.classes = new Set((val || '').split(' ').filter(Boolean));
+      },
       value: '',
-      textContent: '',
+      _textContent: '',
+      get textContent() { return this._textContent; },
+      set textContent(val) {
+        this._textContent = val;
+        if (val === '') this.children = [];
+      },
       checked: false,
       addEventListener: () => {},
       scrollIntoView: () => {},
@@ -279,4 +296,163 @@ test('Audit button label, summary text, and audit status clearing on repo load',
     /async function handleLoadRepo[\s\S]*?el\('auditStatus'\)\.textContent = '';/.test(jsCode),
     'handleLoadRepo should clear auditStatus'
   );
+});
+
+test('Security: Path normalization and traversal handling', () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch);
+  const jsCode = scriptMatch[1];
+
+  const mockScript = jsCode
+    .replace(/await /g, '')
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.normalizePath = normalizePath;\n  globalThis.sanitizeZipPath = sanitizeZipPath;\n  refreshRateLimit();\n})();');
+
+  const fnEvaluator = new Function('document', `
+    ${mockScript}
+    return { normalizePath: globalThis.normalizePath, sanitizeZipPath: globalThis.sanitizeZipPath };
+  `);
+  const dummyEl = { classList: { remove: () => {}, add: () => {} }, style: {}, addEventListener: () => {}, appendChild: () => {} };
+  const mockDoc = { getElementById: () => dummyEl, querySelectorAll: () => [], createElement: () => dummyEl };
+
+  const { normalizePath, sanitizeZipPath } = fnEvaluator(mockDoc);
+
+  // Test normal paths
+  assert.strictEqual(normalizePath('a/b/c.py'), 'a/b/c.py');
+  assert.strictEqual(normalizePath('a/./b/../c.py'), 'a/c.py');
+  assert.strictEqual(normalizePath('./foo/bar.txt'), 'foo/bar.txt');
+
+  // Test root-level path traversal throws error
+  assert.throws(() => normalizePath('../secret.txt'), /Path traversal/);
+  assert.throws(() => normalizePath('a/../../secret.txt'), /Path traversal/);
+
+  // Test sanitizeZipPath fallbacks
+  assert.strictEqual(sanitizeZipPath('a/../b.txt'), 'b.txt');
+});
+
+test('Security: Frontmatter schema validation', () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  const jsCode = scriptMatch[1];
+
+  const mockScript = jsCode
+    .replace(/await /g, '')
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.parseSkillMd = parseSkillMd;\n  refreshRateLimit();\n})();');
+
+  const fnEvaluator = new Function('document', 'jsyaml', `
+    ${mockScript}
+    return { parseSkillMd: globalThis.parseSkillMd };
+  `);
+
+  const mockJsyaml = {
+    load: (str) => {
+      if (str.includes('invalid_type')) return "just a string";
+      if (str.includes('name_num')) return { name: 123, description: "desc" };
+      if (str.includes('desc_bool')) return { name: "valid-name", description: true };
+      return { name: "my-skill", description: "A test skill" };
+    }
+  };
+
+  const dummyEl = { classList: { remove: () => {}, add: () => {} }, style: {}, addEventListener: () => {}, appendChild: () => {} };
+  const mockDoc = { getElementById: () => dummyEl, querySelectorAll: () => [], createElement: () => dummyEl };
+
+  const { parseSkillMd } = fnEvaluator(mockDoc, mockJsyaml);
+
+  // Valid frontmatter
+  const valid = parseSkillMd('---\nname: my-skill\ndescription: A test skill\n---\nBody instructions');
+  assert.strictEqual(valid.frontmatter.name, 'my-skill');
+  assert.strictEqual(valid.body, 'Body instructions');
+
+  // Invalid non-object frontmatter
+  assert.throws(
+    () => parseSkillMd('---\ninvalid_type: true\n---\nBody'),
+    /Invalid frontmatter/
+  );
+
+  // Invalid name type
+  assert.throws(
+    () => parseSkillMd('---\nname_num: true\n---\nBody'),
+    /frontmatter field "name" must be a string/
+  );
+
+  // Invalid description type
+  assert.throws(
+    () => parseSkillMd('---\ndesc_bool: true\n---\nBody'),
+    /frontmatter field "description" must be a string/
+  );
+});
+
+test('Security: Network detection across Python and JS patterns', () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  const jsCode = scriptMatch[1];
+
+  const mockScript = jsCode
+    .replace(/await /g, '')
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.scanForNetworkCalls = scanForNetworkCalls;\n  refreshRateLimit();\n})();');
+
+  const fnEvaluator = new Function('document', mockScript + '\nreturn { scanForNetworkCalls: globalThis.scanForNetworkCalls };');
+
+  const dummyEl = { classList: { remove: () => {}, add: () => {} }, style: {}, addEventListener: () => {}, appendChild: () => {} };
+  const mockDoc = { getElementById: () => dummyEl, querySelectorAll: () => [], createElement: () => dummyEl };
+
+  const { scanForNetworkCalls } = fnEvaluator(mockDoc);
+
+  // Python imports and requests
+  assert.strictEqual(scanForNetworkCalls('import requests\nrequests.get("https://example.com")'), true);
+  assert.strictEqual(scanForNetworkCalls('from urllib.request import urlopen'), true);
+  assert.strictEqual(scanForNetworkCalls('import socket'), true);
+  assert.strictEqual(scanForNetworkCalls('import httpx'), true);
+  assert.strictEqual(scanForNetworkCalls('subprocess.run(["curl", "https://evil.com"])'), true);
+
+  // JS imports and calls
+  assert.strictEqual(scanForNetworkCalls('const axios = require("axios");'), true);
+  assert.strictEqual(scanForNetworkCalls('fetch("https://api.com")'), true);
+  assert.strictEqual(scanForNetworkCalls('import http from "http"'), true);
+
+  // Clean script
+  assert.strictEqual(scanForNetworkCalls('def process_data(x):\n    return x * 2'), false);
+});
+
+test('Security & Limits: Package size calculation and limit enforcement', () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  const jsCode = scriptMatch[1];
+
+  const mockScript = jsCode
+    .replace(/await /g, '')
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.calculatePackageSize = calculatePackageSize;\n  globalThis.MAX_TOTAL_UNCOMPRESSED_SIZE = MAX_TOTAL_UNCOMPRESSED_SIZE;\n  refreshRateLimit();\n})();');
+
+  const fnEvaluator = new Function('document', `
+    ${mockScript}
+    return { calculatePackageSize: globalThis.calculatePackageSize, MAX_TOTAL_UNCOMPRESSED_SIZE: globalThis.MAX_TOTAL_UNCOMPRESSED_SIZE };
+  `);
+
+  const dummyEl = { classList: { remove: () => {}, add: () => {} }, style: {}, addEventListener: () => {}, appendChild: () => {} };
+  const mockDoc = { getElementById: () => dummyEl, querySelectorAll: () => [], createElement: () => dummyEl };
+
+  const { calculatePackageSize, MAX_TOTAL_UNCOMPRESSED_SIZE } = fnEvaluator(mockDoc);
+
+  assert.strictEqual(MAX_TOTAL_UNCOMPRESSED_SIZE, 100 * 1024 * 1024);
+
+  const smallSkill = {
+    fixedName: 'small-skill',
+    description: 'Small desc',
+    instructions: 'Small body',
+    files: [{ path: 'helper.py', content: 'print("hello")', status: 'ok' }]
+  };
+
+  const smallSize = calculatePackageSize(smallSkill, false);
+  assert.ok(smallSize > 0 && smallSize < 1000);
+
+  const largeContent = 'a'.repeat(101 * 1024 * 1024);
+  const hugeSkill = {
+    fixedName: 'huge-skill',
+    description: 'Huge',
+    instructions: 'Huge',
+    files: [{ path: 'big.txt', content: largeContent, status: 'ok' }]
+  };
+
+  const hugeSize = calculatePackageSize(hugeSkill, false);
+  assert.ok(hugeSize > MAX_TOTAL_UNCOMPRESSED_SIZE);
 });
