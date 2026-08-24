@@ -3,9 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SkillMorpher — clear Agent Skills for Gemini Spark</title>
+<title>SkillMorpher — translate Agent Skills for Gemini Spark & CLI</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js" integrity="sha512-CSBhVREyzHAjAFfBlIBakjoRUKp5h7VSweP0InR/pAJyptH7peuhCsqAI/snV+TwZmXZqoUklpXp6R6wMnYf5Q==" crossorigin="anonymous"></script>
+
+<script src="src/platform-detector.js"></script>
+<script src="src/capabilities.js"></script>
+<script src="src/targets.js"></script>
+<script src="src/platforms/gemini-spark.js"></script>
+<script src="src/resource-graph.js"></script>
+<script src="src/script-analyzer.js"></script>
+<script src="src/description-validator.js"></script>
+<script src="src/validator.js"></script>
+<script src="src/translator.js"></script>
+
 <style>
   :root{
     --ink:#161D30;
@@ -136,7 +147,7 @@
   button:disabled:hover{ background:transparent; color:var(--ink); }
 
   .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  input[type=text], input[type=password], textarea{
+  input[type=text], input[type=password], select, textarea{
     font-family:var(--mono);
     font-size:13px;
     background:#fff;
@@ -208,6 +219,26 @@
   .stamp-tag.warn{ color:var(--amber); border:1px solid var(--amber); }
   .stamp-tag.blocked{ color:#fff; background:var(--red); border:1px solid var(--red); }
 
+  .pipeline-stage{
+    display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:8px; margin:16px 0;
+  }
+  .stage-box{
+    border:1px solid var(--line); background:#fff; padding:8px 10px; border-radius:2px; font-size:11px; font-family:var(--mono);
+  }
+  .stage-box .label{ font-weight:700; text-transform:uppercase; color:rgba(22,29,48,0.6); margin-bottom:4px; }
+  .stage-box .val{ font-weight:700; font-size:12px; }
+  .stage-box.pass .val{ color:var(--green); }
+  .stage-box.warn .val{ color:var(--amber); }
+  .stage-box.block .val{ color:var(--red); }
+
+  .diff-table{
+    width:100%; border-collapse:collapse; margin-top:10px; font-family:var(--mono); font-size:11.5px; background:#fff; border:1px solid var(--line);
+  }
+  .diff-table th, .diff-table td{ padding:6px 8px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+  .diff-table th{ background:var(--paper-2); font-family:var(--type); font-size:11px; text-transform:uppercase; }
+  .diff-table .orig{ background:rgba(178,58,46,0.08); }
+  .diff-table .trans{ background:rgba(62,107,79,0.08); }
+
   .manifest-actions{ margin-top:20px; display:flex; gap:10px; flex-wrap:wrap; }
 
   .cred-banner{
@@ -260,9 +291,20 @@
       </span>
     </div>
     <h1>SkillMorpher</h1>
-    <p>Bring a <code>SKILL.md</code> skill — from a GitHub repo, a paste, or a zip — and get back exactly what's declared, what's dropped, and a zip ready to upload as a Gemini Spark skill.</p>
+    <p>Translate and audit Agent Skills into functionally equivalent Gemini skills with capability analysis and deterministic validation.</p>
     <p class="fine">Runs entirely in your browser. Nothing here is uploaded to a server — GitHub is queried directly from your device. See <a href="https://support.google.com/gemini/answer/17094296" target="_blank" rel="noopener">Google's Spark skill requirements</a> for reference. Note: Static heuristic analysis cannot guarantee that a skill is safe or fully compatible.</p>
   </header>
+
+  <!-- ============ TARGET SELECTOR ============ -->
+  <div class="card" style="margin-bottom:16px;">
+    <h2>Target Profile</h2>
+    <div class="row">
+      <select id="targetProfileSelect">
+        <option value="geminiSpark" selected>Gemini Spark (100 MB limit, disallows external network calls)</option>
+        <option value="geminiCli">Gemini CLI (200 MB limit, flexible CLI tool runtime)</option>
+      </select>
+    </div>
+  </div>
 
   <!-- ============ BROWSE ============ -->
   <div class="card">
@@ -310,6 +352,8 @@
     <h2>Manifest</h2>
     <p class="sub" id="manifestSource"></p>
 
+    <div class="pipeline-stage" id="pipelineStages"></div>
+
     <div class="field-view">
       <label class="small">Name — must be lowercase-hyphenated for Spark</label>
       <div class="field-row">
@@ -325,6 +369,13 @@
         <div class="value" id="descValue"></div>
         <button id="copyDesc" class="ghost">Copy</button>
       </div>
+      <div id="descOptimizationBox" style="display:none; margin-top:6px; background:var(--paper-2); padding:8px 10px; border-radius:2px;">
+        <div style="font-size:11.5px; font-weight:700; color:var(--amber);">⚠ Weak or Non-Standard Trigger Description</div>
+        <div style="font-size:12px; margin-top:4px;" id="descOptReason"></div>
+        <div style="font-size:12px; margin-top:6px; font-weight:700;">Suggested:</div>
+        <div style="font-size:12px; font-family:var(--mono);" id="descOptSuggested"></div>
+        <button id="applyDescOptBtn" class="ghost" style="margin-top:6px; font-size:11px; padding:4px 8px;">Apply Description</button>
+      </div>
     </div>
 
     <div class="field-view">
@@ -338,7 +389,21 @@
     <div id="bodyCredBanner" class="cred-banner" style="display:none;"></div>
     <div id="platformBanner" class="cred-banner" style="display:none;"></div>
 
-    <label class="small">Files</label>
+    <div id="translationPanel" style="margin-top:14px; border-top:1px dashed var(--line); padding-top:12px;">
+      <button id="translateBtn" class="primary">Translate to Gemini</button>
+      <div id="translationSummary" style="font-size:12.5px; margin-top:8px;"></div>
+      <div id="diffContainer" style="display:none; margin-top:10px;">
+        <label class="small">Translation Diff</label>
+        <table class="diff-table">
+          <thead>
+            <tr><th>Line</th><th>Original</th><th>Gemini Translated</th></tr>
+          </thead>
+          <tbody id="diffTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <label class="small" style="margin-top:16px;">Files & Scripts</label>
     <ul class="manifest" id="fileManifest"></ul>
 
     <div id="sizeInfo" style="font-size:12.5px; color:rgba(22,29,48,0.75); margin-top:10px;"></div>
@@ -439,7 +504,7 @@
 
   const PLACEHOLDER_HINTS = /(YOUR_|<.*>|xxx+|PLACEHOLDER|\.\.\.)/i;
 
-  const state = { token:'', tree:null, owner:null, repo:null, branch:null, currentSkill:null };
+  const state = { token:'', tree:null, owner:null, repo:null, branch:null, currentSkill:null, targetProfile:'geminiSpark' };
 
   // ---------- helpers ----------
   function el(id){ return document.getElementById(id); }
@@ -699,6 +764,32 @@
     }
   }
 
+  function renderPipelineStages(valResult) {
+    const container = el('pipelineStages');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const stages = [
+      { id: 'STRUCTURE', label: 'STRUCTURE', data: valResult.structure },
+      { id: 'FILES', label: 'FILES', data: valResult.files },
+      { id: 'SECURITY', label: 'SECURITY', data: valResult.security },
+      { id: 'GEMINI', label: 'GEMINI', data: valResult.gemini },
+      { id: 'TRANSLATION', label: 'TRANSLATION', data: { status: valResult.translation.changesCount > 0 ? `${valResult.translation.changesCount} CHANGES` : 'PASS' } }
+    ];
+
+    stages.forEach(s => {
+      const box = document.createElement('div');
+      let statusStr = s.data.status || 'PASS';
+      let cls = 'pass';
+      if (statusStr.includes('BLOCK') || statusStr.includes('ERR')) cls = 'block';
+      else if (statusStr.includes('WARN') || statusStr.includes('NEEDS') || statusStr.includes('CHANGES')) cls = 'warn';
+
+      box.className = `stage-box ${cls}`;
+      box.innerHTML = `<div class="label">${s.label}</div><div class="val">${statusStr}</div>`;
+      container.appendChild(box);
+    });
+  }
+
   function renderManifest(sourceLabel, frontmatter, body, files){
     const name = (frontmatter && typeof frontmatter.name === 'string') ? frontmatter.name : '';
     const desc = (frontmatter && typeof frontmatter.description === 'string') ? frontmatter.description : '';
@@ -707,10 +798,38 @@
 
     state.currentSkill = { sourceLabel, name, fixedName, description: desc, instructions: body, files };
 
+    // Run deterministic pipeline validator
+    const valResult = (typeof Validator !== 'undefined')
+      ? Validator.validateSkill(state.currentSkill, state.targetProfile)
+      : {
+          structure: { status: 'PASS' },
+          files: { status: 'PASS' },
+          security: { status: 'PASS' },
+          gemini: { status: 'PASS' },
+          translation: { changesCount: 0 }
+        };
+
+    renderPipelineStages(valResult);
+
     el('manifestSource').textContent = sourceLabel;
     el('nameValue').textContent = name || '(missing)';
     el('descValue').textContent = desc || '(missing)';
     el('instrValue').value = body || '';
+
+    // Description optimizer rendering
+    const optBox = el('descOptimizationBox');
+    if (valResult.descriptionValidation && valResult.descriptionValidation.isWeakTrigger) {
+      optBox.style.display = 'block';
+      el('descOptReason').textContent = valResult.descriptionValidation.issues.join('; ');
+      el('descOptSuggested').textContent = valResult.descriptionValidation.suggestedDescription;
+      el('applyDescOptBtn').onclick = () => {
+        state.currentSkill.description = valResult.descriptionValidation.suggestedDescription;
+        el('descValue').textContent = state.currentSkill.description;
+        optBox.style.display = 'none';
+      };
+    } else {
+      optBox.style.display = 'none';
+    }
 
     const fixNote = el('nameFixNote');
     if (!name){
@@ -797,6 +916,47 @@
     el('manifestCard').style.display = 'block';
     el('manifestCard').scrollIntoView({ behavior:'smooth', block:'start' });
   }
+
+  // ---------- translation logic ----------
+  el('targetProfileSelect').addEventListener('change', (e) => {
+    state.targetProfile = e.target.value;
+    if (state.currentSkill) {
+      renderManifest(state.currentSkill.sourceLabel, { name: state.currentSkill.name, description: state.currentSkill.description }, state.currentSkill.instructions, state.currentSkill.files);
+    }
+  });
+
+  el('translateBtn').addEventListener('click', () => {
+    if (!state.currentSkill || typeof Translator === 'undefined') return;
+
+    const transRes = Translator.translateSkill(state.currentSkill, state.targetProfile);
+    state.currentSkill.instructions = transRes.translatedBody;
+    if (transRes.translatedDesc) state.currentSkill.description = transRes.translatedDesc;
+
+    el('instrValue').value = transRes.translatedBody;
+
+    const summaryEl = el('translationSummary');
+    summaryEl.textContent = `Gemini Translation completed: ${transRes.changesCount} change(s) applied (HIGH: ${transRes.confidenceCounts.HIGH}, MED: ${transRes.confidenceCounts.MEDIUM}, LOW: ${transRes.confidenceCounts.LOW}, MANUAL REVIEW: ${transRes.manualReviewCount}).`;
+
+    const diffContainer = el('diffContainer');
+    const tbody = el('diffTbody');
+    tbody.innerHTML = '';
+
+    if (transRes.diff && transRes.diff.length) {
+      diffContainer.style.display = 'block';
+      transRes.diff.forEach(d => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${d.line}</td><td class="orig">${d.original}</td><td class="trans">${d.translated}</td>`;
+        tbody.appendChild(tr);
+      });
+    } else {
+      diffContainer.style.display = 'none';
+    }
+
+    // Post-translation deterministic re-validation
+    const postVal = Validator.validateSkill(state.currentSkill, state.targetProfile);
+    postVal.translation.changesCount = transRes.changesCount;
+    renderPipelineStages(postVal);
+  });
 
   // ---------- built-in repo buttons ----------
   const reposWrap = el('builtinRepos');

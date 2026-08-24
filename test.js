@@ -2,6 +2,16 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 
+// Import modular pipeline scripts
+const PlatformDetector = require('./src/platform-detector');
+const Capabilities = require('./src/capabilities');
+const Targets = require('./src/targets');
+const ResourceGraph = require('./src/resource-graph');
+const ScriptAnalyzer = require('./src/script-analyzer');
+const DescriptionValidator = require('./src/description-validator');
+const Validator = require('./src/validator');
+const Translator = require('./src/translator');
+
 test('index.html exists and is non-empty', () => {
   const content = fs.readFileSync('index.html', 'utf8');
   assert.ok(content.length > 0, 'index.html should not be empty');
@@ -29,7 +39,12 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'includeBlockedCheckbox',
     'bodyCredBanner',
     'platformBanner',
-    'downloadStatus'
+    'downloadStatus',
+    'targetProfileSelect',
+    'pipelineStages',
+    'translateBtn',
+    'translationSummary',
+    'diffContainer'
   ];
 
   for (const id of expectedIds) {
@@ -64,6 +79,106 @@ test('JavaScript syntax is valid in index.html', () => {
   assert.doesNotThrow(() => {
     new Function(jsCode.replace(/await /g, ''));
   }, 'Inline JavaScript should compile without syntax errors');
+});
+
+test('PlatformDetector module correctly identifies platform terms', () => {
+  const text = 'Use the Bash tool to run commands in /mnt/data.\nAlso call OpenAI code_interpreter and MCP server.';
+  const res = PlatformDetector.detectPlatforms(text);
+
+  assert.ok(res.platforms.includes('Anthropic'));
+  assert.ok(res.platforms.includes('OpenAI'));
+  assert.ok(res.platforms.includes('Generic'));
+
+  const bashDet = res.detections.find(d => d.term === 'Bash');
+  assert.ok(bashDet);
+  assert.strictEqual(bashDet.line, 1);
+});
+
+test('Capabilities module builds capability requirements correctly', () => {
+  const detections = [
+    { platform: 'Anthropic', term: 'Bash', capability: 'shellExecution', line: 5, lineContent: 'Use Bash tool' }
+  ];
+  const reqs = Capabilities.buildCapabilityRequirements(detections);
+  assert.strictEqual(reqs.length, 1);
+  assert.strictEqual(reqs[0].capability, 'shellExecution');
+  assert.strictEqual(reqs[0].confidence, 0.99);
+  assert.strictEqual(reqs[0].location, 'SKILL.md:5');
+});
+
+test('ResourceGraph identifies missing and unsupported files', () => {
+  const body = 'Refer to `scripts/fetch.py` and `references/schema.md` and `assets/template.docx`.';
+  const bundledFiles = [
+    { path: 'scripts/fetch.py', status: 'ok' },
+    { path: 'assets/template.docx', status: 'dropped', reason: 'unsupported extension' }
+  ];
+
+  const graph = ResourceGraph.buildResourceGraph(body, bundledFiles);
+
+  assert.strictEqual(graph.references.length, 3);
+  assert.strictEqual(graph.missingOrBroken.length, 2);
+
+  const missingSchema = graph.missingOrBroken.find(r => r.reference === 'references/schema.md');
+  assert.ok(missingSchema);
+  assert.strictEqual(missingSchema.status, 'missing');
+
+  const droppedDocx = graph.missingOrBroken.find(r => r.reference === 'assets/template.docx');
+  assert.ok(droppedDocx);
+  assert.strictEqual(droppedDocx.status, 'unsupported');
+});
+
+test('ScriptAnalyzer classifies scripts into SAFE, CONDITIONAL, INCOMPATIBLE', () => {
+  const safeScript = ScriptAnalyzer.analyzeScript('clean.py', 'def add(a, b):\n    return a + b');
+  assert.strictEqual(safeScript.classification, 'SAFE');
+
+  const conditionalScript = ScriptAnalyzer.analyzeScript('os.py', 'import subprocess\nprint("hello")');
+  assert.strictEqual(conditionalScript.classification, 'CONDITIONAL');
+
+  const incompatibleScript = ScriptAnalyzer.analyzeScript('fetch.py', 'import requests\nrequests.get("https://api.com")');
+  assert.strictEqual(incompatibleScript.classification, 'INCOMPATIBLE');
+  assert.strictEqual(incompatibleScript.hasNetwork, true);
+});
+
+test('DescriptionValidator validates description rules and offers suggested trigger description', () => {
+  const weak = DescriptionValidator.validateDescription('Helps with PDFs.', 'pdf-helper');
+  assert.strictEqual(weak.isValid, false);
+  assert.strictEqual(weak.isWeakTrigger, true);
+  assert.ok(weak.suggestedDescription.includes('pdf helper'));
+
+  const valid = DescriptionValidator.validateDescription('Extracts text and tables from PDF files, fills PDF forms, and merges documents. Use when the user mentions PDFs, form filling, or document extraction.', 'pdf-helper');
+  assert.strictEqual(valid.isValid, true);
+});
+
+test('Validator checks frontmatter regex name and pipeline results', () => {
+  const invalidSkill = { fixedName: '-invalid-name-', description: 'desc', instructions: 'body', files: [] };
+  const valResult1 = Validator.validateSkill(invalidSkill, 'geminiSpark');
+  assert.strictEqual(valResult1.structure.status, 'BLOCK');
+
+  const validSkill = {
+    fixedName: 'my-valid-skill',
+    description: 'Processes data when user requests analytics.',
+    instructions: 'Use the Bash tool to inspect the repository.\nRun:\n`find . -type f`',
+    files: []
+  };
+  const valResult2 = Validator.validateSkill(validSkill, 'geminiSpark');
+  assert.strictEqual(valResult2.structure.status, 'PASS');
+  assert.strictEqual(valResult2.gemini.needsTranslation, true);
+});
+
+test('Translator engine performs concrete Gemini translations, manual review warnings, and diff generation', () => {
+  const skill = {
+    instructions: 'Use the Bash tool to inspect the repository.\nRun:\n`find . -type f`\nUse `str_replace` to modify the target file.\nUse the `computer` tool to open browser.',
+    description: 'Helps with repository editing.'
+  };
+
+  const res = Translator.translateSkill(skill, 'geminiSpark');
+
+  assert.ok(res.translatedBody.includes('Inspect the repository files available to you'));
+  assert.ok(res.translatedBody.includes('Modify the target file directly while preserving unrelated content'));
+  assert.ok(res.translatedBody.includes('Manual review required'));
+  assert.strictEqual(res.changesCount, 4);
+  assert.ok(res.diff.length > 0);
+  assert.strictEqual(res.confidenceCounts.HIGH, 3);
+  assert.strictEqual(res.confidenceCounts.NONE, 1);
 });
 
 test('Credential scanning, platform jargon detection, extractTopics, and path sanitization helper functions', () => {
