@@ -201,7 +201,7 @@ Return ONLY the updated instructions string.`;
 
     try {
       const prompt = generateAIPrompt(skill, targetKey);
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -218,6 +218,46 @@ test('Translator AI prompt generation and unconfigured/offline fallback handling
   assert.ok(fallbackRes.translatedBody.includes('Inspect the repository files available to you'));
 });
 
+test('BrowserLocalProvider: loadModel times out on a hung download', async () => {
+  let capturedAbortSignal = null;
+  global.transformers = {
+    AutoProcessor: {
+      from_pretrained: (repo, opts) => {
+        capturedAbortSignal = opts && opts.abort_signal;
+        return new Promise((resolve, reject) => {
+          if (opts && opts.abort_signal) {
+            opts.abort_signal.addEventListener('abort', () => {
+              const err = new Error('Download aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }
+        });
+      }
+    },
+    Gemma4ForConditionalGeneration: {
+      from_pretrained: () => new Promise(() => {})
+    }
+  };
+
+  const provider = new BrowserLocalProvider();
+  provider.loadTimeoutMs = 100;
+  provider.checkHardwareSupport = async () => ({ supported: true });
+
+  const start = Date.now();
+  await assert.rejects(
+    () => provider.loadModel('gemma-4-e2b-it-webgpu'),
+    /timed out after 100ms/
+  );
+  const elapsed = Date.now() - start;
+
+  assert.ok(elapsed < 1000, `Expected timeout in wall-clock bound (< 1000ms), took ${elapsed}ms`);
+  assert.ok(capturedAbortSignal, 'loadModel should pass abort_signal to from_pretrained');
+  assert.strictEqual(capturedAbortSignal.aborted, true, 'abort_signal should be aborted after timeout');
+
+  delete global.transformers;
+});
+
 test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware checking, and simultaneous load guard', async () => {
   const provider = new BrowserLocalProvider();
   const models = BrowserLocalProvider.getModels();
@@ -862,7 +902,7 @@ test('Regression: fetchSkillFiles marks 404/failed fetch as blocked', async () =
   assert.strictEqual(files[0].content, null);
 });
 
-test('Regression: translateSkillAI uses gemini-2.5-flash and x-goog-api-key header', async () => {
+test('Regression: translateSkillAI uses gemini-flash-latest and x-goog-api-key header', async () => {
   const skill = { instructions: 'Test instructions', description: 'Test desc' };
   let capturedUrl = '';
   let capturedHeaders = {};
@@ -882,7 +922,7 @@ test('Regression: translateSkillAI uses gemini-2.5-flash and x-goog-api-key head
   try {
     const res = await Translator.translateSkillAI(skill, 'test-api-key', 'geminiSpark');
     assert.strictEqual(res.isAI, true);
-    assert.ok(capturedUrl.includes('gemini-2.5-flash'), `URL should contain gemini-2.5-flash (was ${capturedUrl})`);
+    assert.ok(capturedUrl.includes('gemini-flash-latest'), `URL should contain gemini-flash-latest (was ${capturedUrl})`);
     assert.strictEqual(capturedUrl.includes('key='), false, 'URL should not contain API key in query string');
     assert.strictEqual(capturedHeaders['x-goog-api-key'], 'test-api-key', 'Header x-goog-api-key should match passed API key');
   } finally {
