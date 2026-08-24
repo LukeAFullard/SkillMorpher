@@ -10,6 +10,7 @@ const ResourceGraph = require('./src/resource-graph');
 const ScriptAnalyzer = require('./src/script-analyzer');
 const DescriptionValidator = require('./src/description-validator');
 const Validator = require('./src/validator');
+const OllamaProvider = require('./src/providers/ollama-provider');
 const Translator = require('./src/translator');
 
 test('index.html exists and is non-empty', () => {
@@ -195,6 +196,58 @@ test('Translator AI prompt generation and unconfigured/offline fallback handling
   const fallbackRes = await Translator.translateSkillAI(skill, null, 'geminiSpark');
   assert.strictEqual(fallbackRes.isAI, false);
   assert.ok(fallbackRes.translatedBody.includes('Inspect the repository files available to you'));
+});
+
+test('OllamaProvider structured prompt formatting and response validation', () => {
+  const provider = new OllamaProvider('http://localhost:11434');
+  const skill = { instructions: 'Use the Bash tool to check code.', description: 'Test skill' };
+  const analysis = { gemini: { sourcePlatform: 'anthropic' }, capabilities: ['shellExecution'] };
+
+  const structuredPrompt = provider.buildStructuredPrompt({ skill, analysis, target: 'gemini-spark' });
+  assert.ok(structuredPrompt.includes('"source_platform": "anthropic"'));
+  assert.ok(structuredPrompt.includes('"translated_skill_md"'));
+});
+
+test('Translator translateWithProvider routing and fallback behavior', async () => {
+  const skill = { instructions: 'Use the Bash tool to inspect the repository.', description: 'Test' };
+
+  // Mock failing provider
+  const failingProvider = {
+    id: 'ollama',
+    translate: async () => { throw new Error('Ollama offline'); }
+  };
+
+  const resFailing = await Translator.translateWithProvider({
+    provider: failingProvider,
+    model: 'gemma4:12b',
+    skill,
+    targetKey: 'geminiSpark'
+  });
+
+  assert.strictEqual(resFailing.mode, 'deterministic-fallback');
+  assert.strictEqual(resFailing.providerError, 'Ollama offline');
+  assert.ok(resFailing.translatedBody.includes('Inspect the repository files available to you'));
+
+  // Mock successful provider
+  const successProvider = {
+    id: 'ollama',
+    translate: async () => ({
+      translatedBody: 'Inspect the repository available files.',
+      changes: [{ original: 'Use the Bash tool', replacement: 'Inspect files', reason: 'Translated', confidence: 'high' }],
+      manualReview: []
+    })
+  };
+
+  const resSuccess = await Translator.translateWithProvider({
+    provider: successProvider,
+    model: 'gemma4:12b',
+    skill,
+    targetKey: 'geminiSpark'
+  });
+
+  assert.strictEqual(resSuccess.mode, 'provider');
+  assert.strictEqual(resSuccess.providerId, 'ollama');
+  assert.strictEqual(resSuccess.model, 'gemma4:12b');
 });
 
 test('Credential scanning, platform jargon detection, extractTopics, and path sanitization helper functions', () => {

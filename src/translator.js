@@ -5,16 +5,18 @@
     module.exports = factory(
       require('./platform-detector'),
       require('./capabilities'),
-      require('./platforms/gemini-spark')
+      require('./platforms/gemini-spark'),
+      require('./providers/ollama-provider')
     );
   } else {
     root.Translator = factory(
       root.PlatformDetector,
       root.Capabilities,
-      root.GeminiSparkMappings
+      root.GeminiSparkMappings,
+      root.OllamaProvider
     );
   }
-}(typeof self !== 'undefined' ? self : this, function (PlatformDetector, Capabilities, GeminiSparkMappings) {
+}(typeof self !== 'undefined' ? self : this, function (PlatformDetector, Capabilities, GeminiSparkMappings, OllamaProvider) {
   'use strict';
 
   function translateSkill(skill, targetKey = 'geminiSpark') {
@@ -175,7 +177,6 @@ Return ONLY the updated instructions string.`;
         isAI: true
       };
     } catch (e) {
-      // Fallback to deterministic translation on API failure or offline
       const det = translateSkill(skill, targetKey);
       return {
         ...det,
@@ -185,9 +186,37 @@ Return ONLY the updated instructions string.`;
     }
   }
 
+  async function translateWithProvider({ provider, model, skill, analysis, targetKey = 'geminiSpark' }) {
+    if (!provider || typeof provider.translate !== 'function') {
+      return { ...translateSkill(skill, targetKey), mode: 'deterministic' };
+    }
+
+    try {
+      const res = await provider.translate({ skill, analysis, target: targetKey, model });
+      const aiSkill = { ...skill, instructions: res.translatedBody };
+      const deterministicPost = translateSkill(aiSkill, targetKey);
+      return {
+        ...deterministicPost,
+        mode: 'provider',
+        providerId: provider.id,
+        model,
+        providerChanges: res.changes,
+        providerManualReview: res.manualReview
+      };
+    } catch (err) {
+      const det = translateSkill(skill, targetKey);
+      return {
+        ...det,
+        mode: 'deterministic-fallback',
+        providerError: err.message
+      };
+    }
+  }
+
   return {
     translateSkill,
     generateAIPrompt,
-    translateSkillAI
+    translateSkillAI,
+    translateWithProvider
   };
 }));
