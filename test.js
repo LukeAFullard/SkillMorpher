@@ -25,7 +25,8 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'copyInstr',
     'downloadBtn',
     'includeBlockedCheckbox',
-    'bodyCredBanner'
+    'bodyCredBanner',
+    'downloadStatus'
   ];
 
   for (const id of expectedIds) {
@@ -106,6 +107,13 @@ test('Credential scanning and path sanitization helper functions', () => {
   const pwdRefResult = scanForCredentials('Requires DB_PASSWORD setting');
   assert.strictEqual(pwdRefResult.hasKeyReference, true);
 
+  // Test assignment-shaped key patterns (camelCase / lowercase / yaml / json style)
+  const yamlKeyResult = scanForCredentials('apiKey: my-placeholder');
+  assert.strictEqual(yamlKeyResult.hasKeyReference, true, 'apiKey: assignment should trigger strict reference detection');
+
+  const eqSecretResult = scanForCredentials('client_secret=some_value');
+  assert.strictEqual(eqSecretResult.hasKeyReference, true, 'client_secret= assignment should trigger strict reference detection');
+
   // Test soft vs strict reference separation
   const softProseResult = scanForCredentials('Please supply your api_key here');
   assert.strictEqual(softProseResult.hasKeyReference, false, 'Bare "api_key" should not trigger strict hasKeyReference');
@@ -119,4 +127,95 @@ test('Credential scanning and path sanitization helper functions', () => {
 
   const sanitizedNested = sanitizeZipPath('foo/../bar/./baz/../../evil.js');
   assert.strictEqual(sanitizedNested, 'foo/bar/baz/evil.js');
+});
+
+test('renderManifest and body credential scanning state/UI behavior', () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, '<script> block should exist');
+
+  const jsCode = scriptMatch[1];
+
+  // Create a minimal mock DOM environment to test renderManifest
+  const createMockElement = (id = '') => {
+    const el = {
+      id,
+      style: {},
+      classList: {
+        add: function(c) { el.classes.add(c); },
+        remove: function(c) { el.classes.delete(c); }
+      },
+      classes: new Set(),
+      children: [],
+      _innerHTML: '',
+      get innerHTML() { return this._innerHTML; },
+      set innerHTML(val) {
+        this._innerHTML = val;
+        if (val === '') this.children = [];
+      },
+      value: '',
+      textContent: '',
+      checked: false,
+      addEventListener: () => {},
+      scrollIntoView: () => {},
+      appendChild: function(child) {
+        this.children.push(child);
+      }
+    };
+    return el;
+  };
+
+  const elements = {};
+  const mockDoc = {
+    getElementById: (id) => {
+      if (!elements[id]) {
+        elements[id] = createMockElement(id);
+      }
+      return elements[id];
+    },
+    querySelectorAll: () => [],
+    createElement: (tag) => createMockElement()
+  };
+
+  const mockScript = jsCode
+    .replace(/await /g, '')
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.renderManifest = renderManifest;\n  globalThis.state = state;\n  refreshRateLimit();\n})();');
+
+  const evalContext = new Function('document', 'window', 'globalThis', `
+    ${mockScript}
+    return { renderManifest: globalThis.renderManifest, state: globalThis.state };
+  `);
+
+  const { renderManifest, state } = evalContext(mockDoc, {}, globalThis);
+
+  // Test 1: Clean body
+  renderManifest('test source', { name: 'my-skill', description: 'Clean description' }, 'Clean instructions', []);
+  assert.strictEqual(state.currentSkill.bodyKeyReference, false);
+  assert.deepStrictEqual(state.currentSkill.bodySecrets, []);
+  assert.strictEqual(mockDoc.getElementById('bodyCredBanner').style.display, 'none');
+
+  const fileListClean = mockDoc.getElementById('fileManifest');
+  assert.ok(fileListClean.children[0].innerHTML.includes('SKILL.md'));
+  assert.ok(fileListClean.children[0].innerHTML.includes('stamp-tag ok'));
+
+  // Test 2: Body with key reference (OPENAI_API_KEY example)
+  renderManifest('test source', { name: 'my-skill', description: 'OPENAI_API_KEY required' }, 'Instructions here', []);
+  assert.strictEqual(state.currentSkill.bodyKeyReference, true);
+  assert.deepStrictEqual(state.currentSkill.bodySecrets, []);
+  assert.strictEqual(mockDoc.getElementById('bodyCredBanner').style.display, 'block');
+  assert.strictEqual(mockDoc.getElementById('bodyCredBanner').className, 'cred-banner');
+  assert.ok(mockDoc.getElementById('bodyCredBanner').textContent.includes('reference a third-party API key'));
+
+  const fileListRef = mockDoc.getElementById('fileManifest');
+  assert.ok(fileListRef.children[0].innerHTML.includes('stamp-tag warn'));
+
+  // Test 3: Body with literal secret (Anthropic key)
+  renderManifest('test source', { name: 'my-skill', description: 'Desc' }, 'Here is my key sk-ant-api03-12345678901234567890', []);
+  assert.deepStrictEqual(state.currentSkill.bodySecrets, ['Anthropic key']);
+  assert.strictEqual(mockDoc.getElementById('bodyCredBanner').style.display, 'block');
+  assert.strictEqual(mockDoc.getElementById('bodyCredBanner').className, 'cred-banner cred-banner-blocked');
+  assert.ok(mockDoc.getElementById('bodyCredBanner').textContent.includes('real Anthropic key value'));
+
+  const fileListBlocked = mockDoc.getElementById('fileManifest');
+  assert.ok(fileListBlocked.children[0].innerHTML.includes('stamp-tag blocked'));
 });
