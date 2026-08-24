@@ -295,15 +295,17 @@
     <p class="fine">Runs entirely in your browser. Nothing here is uploaded to a server — GitHub is queried directly from your device. See <a href="https://support.google.com/gemini/answer/17094296" target="_blank" rel="noopener">Google's Spark skill requirements</a> for reference. Note: Static heuristic analysis cannot guarantee that a skill is safe or fully compatible.</p>
   </header>
 
-  <!-- ============ TARGET SELECTOR ============ -->
+  <!-- ============ TARGET SELECTOR & AI SETTINGS ============ -->
   <div class="card" style="margin-bottom:16px;">
-    <h2>Target Profile</h2>
-    <div class="row">
+    <h2>Target Profile & AI Settings</h2>
+    <div class="row" style="margin-bottom:10px;">
       <select id="targetProfileSelect">
         <option value="geminiSpark" selected>Gemini Spark (100 MB limit, disallows external network calls)</option>
         <option value="geminiCli">Gemini CLI (200 MB limit, flexible CLI tool runtime)</option>
       </select>
     </div>
+    <label class="small" for="geminiApiKey">Optional Gemini API Key (enables AI-assisted SKILL.md translation via gemini-1.5-flash)</label>
+    <input type="password" id="geminiApiKey" placeholder="AIzaSy...">
   </div>
 
   <!-- ============ BROWSE ============ -->
@@ -925,37 +927,49 @@
     }
   });
 
-  el('translateBtn').addEventListener('click', () => {
+  el('translateBtn').addEventListener('click', async () => {
     if (!state.currentSkill || typeof Translator === 'undefined') return;
 
-    const transRes = Translator.translateSkill(state.currentSkill, state.targetProfile);
-    state.currentSkill.instructions = transRes.translatedBody;
-    if (transRes.translatedDesc) state.currentSkill.description = transRes.translatedDesc;
+    const apiKey = el('geminiApiKey') ? el('geminiApiKey').value.trim() : '';
+    const btn = el('translateBtn');
+    btn.disabled = true;
+    btn.textContent = apiKey ? 'Translating with Gemini AI…' : 'Translating…';
 
-    el('instrValue').value = transRes.translatedBody;
+    try {
+      const transRes = await Translator.translateSkillAI(state.currentSkill, apiKey, state.targetProfile);
+      state.currentSkill.instructions = transRes.translatedBody;
+      if (transRes.translatedDesc) state.currentSkill.description = transRes.translatedDesc;
 
-    const summaryEl = el('translationSummary');
-    summaryEl.textContent = `Gemini Translation completed: ${transRes.changesCount} change(s) applied (HIGH: ${transRes.confidenceCounts.HIGH}, MED: ${transRes.confidenceCounts.MEDIUM}, LOW: ${transRes.confidenceCounts.LOW}, MANUAL REVIEW: ${transRes.manualReviewCount}).`;
+      el('instrValue').value = transRes.translatedBody;
 
-    const diffContainer = el('diffContainer');
-    const tbody = el('diffTbody');
-    tbody.innerHTML = '';
+      const summaryEl = el('translationSummary');
+      const modeStr = transRes.isAI ? 'Gemini AI-Assisted Translation' : 'Deterministic Translation';
+      const errStr = transRes.aiError ? ` (AI Key failed/unreachable: ${transRes.aiError}, fell back to deterministic)` : '';
+      summaryEl.textContent = `${modeStr} completed${errStr}: ${transRes.changesCount} change(s) applied (HIGH: ${transRes.confidenceCounts.HIGH}, MED: ${transRes.confidenceCounts.MEDIUM}, LOW: ${transRes.confidenceCounts.LOW}, MANUAL REVIEW: ${transRes.manualReviewCount}).`;
 
-    if (transRes.diff && transRes.diff.length) {
-      diffContainer.style.display = 'block';
-      transRes.diff.forEach(d => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${d.line}</td><td class="orig">${d.original}</td><td class="trans">${d.translated}</td>`;
-        tbody.appendChild(tr);
-      });
-    } else {
-      diffContainer.style.display = 'none';
+      const diffContainer = el('diffContainer');
+      const tbody = el('diffTbody');
+      tbody.innerHTML = '';
+
+      if (transRes.diff && transRes.diff.length) {
+        diffContainer.style.display = 'block';
+        transRes.diff.forEach(d => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${d.line}</td><td class="orig">${d.original}</td><td class="trans">${d.translated}</td>`;
+          tbody.appendChild(tr);
+        });
+      } else {
+        diffContainer.style.display = 'none';
+      }
+
+      // Post-translation deterministic re-validation
+      const postVal = Validator.validateSkill(state.currentSkill, state.targetProfile);
+      postVal.translation.changesCount = transRes.changesCount;
+      renderPipelineStages(postVal);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Translate to Gemini';
     }
-
-    // Post-translation deterministic re-validation
-    const postVal = Validator.validateSkill(state.currentSkill, state.targetProfile);
-    postVal.translation.changesCount = transRes.changesCount;
-    renderPipelineStages(postVal);
   });
 
   // ---------- built-in repo buttons ----------

@@ -129,7 +129,65 @@
     };
   }
 
+  function generateAIPrompt(skill, targetKey = 'geminiSpark') {
+    const body = skill.instructions || skill.body || '';
+    const desc = skill.description || '';
+    return `You are a Gemini Agent Skill Translator.
+Rewrite the following Agent Skill instructions into instructions functionally equivalent for ${targetKey === 'geminiCli' ? 'Gemini CLI' : 'Gemini Spark'}.
+
+Constraints:
+1. Replace Claude/OpenAI tool names (Bash tool, str_replace, file_search, code_interpreter) with standard Gemini equivalent instructions.
+2. If browser automation or computer_use is required, add a clear "## Manual review required" block stating that interactive UI/browser access is unavailable in Gemini Spark. Do not invent fake capabilities.
+3. Keep instructions concise and preserve progressive disclosure.
+
+Skill Description: ${desc}
+
+Original Instructions:
+${body}
+
+Return ONLY the updated instructions string.`;
+  }
+
+  async function translateSkillAI(skill, apiKey, targetKey = 'geminiSpark') {
+    if (!apiKey) {
+      return { ...translateSkill(skill, targetKey), isAI: false };
+    }
+
+    try {
+      const prompt = generateAIPrompt(skill, targetKey);
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }]
+        })
+      });
+
+      if (!res.ok) throw new Error(`Gemini API returned ${res.status}`);
+      const data = await res.json();
+      const llmText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!llmText) throw new Error('Empty response from Gemini API');
+
+      const aiSkill = { ...skill, instructions: llmText.trim() };
+      const deterministicRes = translateSkill(aiSkill, targetKey);
+      return {
+        ...deterministicRes,
+        isAI: true
+      };
+    } catch (e) {
+      // Fallback to deterministic translation on API failure or offline
+      const det = translateSkill(skill, targetKey);
+      return {
+        ...det,
+        isAI: false,
+        aiError: e.message
+      };
+    }
+  }
+
   return {
-    translateSkill
+    translateSkill,
+    generateAIPrompt,
+    translateSkillAI
   };
 }));

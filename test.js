@@ -181,6 +181,22 @@ test('Translator engine performs concrete Gemini translations, manual review war
   assert.strictEqual(res.confidenceCounts.NONE, 1);
 });
 
+test('Translator AI prompt generation and unconfigured/offline fallback handling', async () => {
+  const skill = {
+    instructions: 'Use the Bash tool to inspect the repository.',
+    description: 'A test skill'
+  };
+
+  const prompt = Translator.generateAIPrompt(skill, 'geminiSpark');
+  assert.ok(prompt.includes('Gemini Agent Skill Translator'));
+  assert.ok(prompt.includes('Original Instructions:\nUse the Bash tool to inspect the repository.'));
+
+  // Calling translateSkillAI without key returns deterministic result
+  const fallbackRes = await Translator.translateSkillAI(skill, null, 'geminiSpark');
+  assert.strictEqual(fallbackRes.isAI, false);
+  assert.ok(fallbackRes.translatedBody.includes('Inspect the repository files available to you'));
+});
+
 test('Credential scanning, platform jargon detection, extractTopics, and path sanitization helper functions', () => {
   const html = fs.readFileSync('index.html', 'utf8');
   const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
