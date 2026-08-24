@@ -65,6 +65,14 @@
     }
   }
 
+  async function loadTransformersRuntime(globalObj) {
+    if (globalObj.transformers || globalObj.Transformers) return globalObj.transformers || globalObj.Transformers;
+    if (globalObj.__transformersModule) return globalObj.__transformersModule;
+    const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3');
+    globalObj.__transformersModule = mod;
+    return mod;
+  }
+
   class BrowserLocalProvider {
     constructor() {
       this.id = 'browser-local';
@@ -286,7 +294,7 @@ Return ONLY valid JSON with the following exact schema:
       this.isModelLoading = true;
       try {
         const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
-        const transformers = globalObj.transformers || globalObj.Transformers;
+        const transformers = await loadTransformersRuntime(globalObj);
 
         if (transformers) {
           const onProgress = (report) => {
@@ -339,7 +347,7 @@ Return ONLY valid JSON with the following exact schema:
       const prompt = this.buildStructuredPrompt({ skill, analysis, target });
 
       const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
-      const transformers = globalObj.transformers || globalObj.Transformers;
+      const transformers = await loadTransformersRuntime(globalObj);
 
       if (transformers && !this.loadedPipeline && !this.loadedModel) {
         await this.loadModel(model, progressCallback);

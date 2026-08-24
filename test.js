@@ -15,19 +15,19 @@ const TranslationProviders = require('./src/providers/index');
 const Translator = require('./src/translator');
 const BenchmarkCorpus = require('./src/benchmark-corpus');
 
-test('index.html exists, imports Transformers.js, and contains no WebLLM CDN references', () => {
+test('index.html exists and contains no WebLLM CDN references', () => {
   const content = fs.readFileSync('index.html', 'utf8');
   assert.ok(content.length > 0, 'index.html should not be empty');
   assert.ok(content.includes('<!doctype html>'), 'index.html should start with doctype');
   assert.ok(content.includes('SkillMorpher'), 'index.html should contain title header');
-  assert.ok(content.includes('transformers.min.js'), 'index.html must import Transformers.js');
+  assert.strictEqual(content.includes('transformers.min.js'), false, 'index.html must not import classic transformers.min.js script');
   assert.strictEqual(content.includes('web-llm'), false, 'index.html must not import WebLLM CDN script');
 });
 
 test('browser-test.html exists and contains Gemma 4 E2B/E4B verification suite', () => {
   assert.ok(fs.existsSync('browser-test.html'), 'browser-test.html should exist');
   const content = fs.readFileSync('browser-test.html', 'utf8');
-  assert.ok(content.includes('transformers.min.js'), 'browser-test.html must import Transformers.js');
+  assert.strictEqual(content.includes('transformers.min.js'), false, 'browser-test.html must not import classic transformers.min.js script');
   assert.ok(content.includes('gemma-4-e2b-it-webgpu'), 'browser-test.html must test Gemma 4 E2B model');
   assert.ok(content.includes('gemma-4-e4b-it-webgpu'), 'browser-test.html must test Gemma 4 E4B model');
 });
@@ -309,7 +309,7 @@ test('Translator translateWithProvider routing and fallback behavior for Gemma 4
   });
 
   assert.strictEqual(resFailing.mode, 'deterministic-fallback');
-  assert.ok(resFailing.providerError.includes('Transformers.js'));
+  assert.ok(resFailing.providerError && resFailing.providerError.length > 0);
   assert.ok(resFailing.translatedBody.includes('Inspect the repository files available to you'));
 
   // Mock successful provider
