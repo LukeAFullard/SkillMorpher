@@ -257,7 +257,7 @@ test('Translator translateWithProvider routing and fallback behavior for Gemma 4
   });
 
   assert.strictEqual(resFailing.mode, 'deterministic-fallback');
-  assert.ok(resFailing.providerError.includes('WebLLM'));
+  assert.ok(resFailing.providerError.includes('Transformers.js'));
   assert.ok(resFailing.translatedBody.includes('Inspect the repository files available to you'));
 
   // Mock successful provider

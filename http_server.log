@@ -1,0 +1,13 @@
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /index.html HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/targets.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/capabilities.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/platforms/gemini-spark.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/script-analyzer.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/resource-graph.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/platform-detector.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/description-validator.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/providers/browser-local-provider.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/validator.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/providers/index.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/translator.js HTTP/1.1" 200 -
+127.0.0.1 - - [24/Aug/2026 06:57:56] "GET /src/benchmark-corpus.js HTTP/1.1" 200 -
