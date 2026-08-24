@@ -214,6 +214,9 @@
     font-size:12.5px; padding:10px; margin-top:14px; border-radius:2px;
     background: rgba(180,121,30,0.12); border:1px solid var(--amber); color:#7a5314;
   }
+  .cred-banner.cred-banner-blocked{
+    background: rgba(178,58,46,0.12); border-color:var(--red); color:var(--red);
+  }
 
   .stamp-seal{
     position:absolute; top:14px; right:18px;
@@ -344,6 +347,7 @@
       <button class="primary" id="downloadBtn">Download Spark-ready .zip</button>
       <button class="ghost" id="clearBtn">Clear</button>
     </div>
+    <div id="downloadStatus" class="status-msg err" style="display:none;"></div>
   </div>
 
   <footer>
@@ -369,6 +373,7 @@
 
   const CREDENTIAL_ENV_PATTERNS = [
     /\b[A-Z][A-Z0-9_]*_(API_KEY|ACCESS_TOKEN|SECRET_KEY|TOKEN|PASSWORD|PASSWD|CLIENT_SECRET)\b/,
+    /\b(api[_-]?key|client[_-]?secret|access[_-]?token|secret[_-]?key)\s*[:=]/i,
   ];
   const SOFT_CREDENTIAL_HINTS = [
     /\bapi[_-]?key\b/i,
@@ -561,13 +566,23 @@
     }
 
     const bodyCred = scanForCredentials(body + ' ' + desc, true);
+    state.currentSkill.bodyKeyReference = bodyCred.hasKeyReference;
+    state.currentSkill.bodySecrets = bodyCred.secrets;
+
     const bodyBanner = el('bodyCredBanner');
-    if (bodyCred.hasKeyReference || bodyCred.secrets.length) {
+    if (bodyCred.secrets.length) {
       bodyBanner.style.display = 'block';
-      bodyBanner.textContent = 'This skill\'s instructions reference an API key — irrelevant/unsafe after conversion to Spark.';
+      bodyBanner.className = 'cred-banner cred-banner-blocked';
+      bodyBanner.textContent = `Instructions contain what looks like a real ${bodyCred.secrets.join('/')} value — download is blocked until it's removed, or check "include flagged secrets anyway."`;
+    } else if (bodyCred.hasKeyReference) {
+      bodyBanner.style.display = 'block';
+      bodyBanner.className = 'cred-banner';
+      bodyBanner.textContent = 'This skill\u2019s instructions reference a third-party API key — not usable in Spark\u2019s sandbox.';
     } else {
       bodyBanner.style.display = 'none';
     }
+
+    el('downloadStatus').style.display = 'none';
 
     const list = el('fileManifest');
     list.innerHTML = '';
@@ -579,7 +594,12 @@
                       '<span class="stamp-tag ' + tagClass + '">' + tagText + '</span>';
       list.appendChild(li);
     };
-    addRow('SKILL.md', 'ok', null);
+
+    const skillMdStatus = bodyCred.secrets.length ? 'blocked' : (bodyCred.hasKeyReference ? 'warn' : 'ok');
+    const skillMdReason = bodyCred.secrets.length
+      ? `looks like a real ${bodyCred.secrets.join('/')} value in the instructions`
+      : (bodyCred.hasKeyReference ? 'instructions reference a third-party API key' : null);
+    addRow('SKILL.md', skillMdStatus, skillMdReason);
     files.forEach(f => addRow(f.path, f.status, f.reason));
 
     document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
@@ -795,19 +815,29 @@
   el('clearBtn').addEventListener('click', () => {
     state.currentSkill = null;
     el('manifestCard').style.display = 'none';
+    el('downloadStatus').style.display = 'none';
     document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
   });
 
   el('downloadBtn').addEventListener('click', async () => {
     const skill = state.currentSkill;
     if (!skill) return;
+
+    const includeBlocked = el('includeBlockedCheckbox').checked;
+    if (skill.bodySecrets && skill.bodySecrets.length && !includeBlocked) {
+      const ds = el('downloadStatus');
+      ds.textContent = 'Download blocked — instructions contain what looks like a real secret. Remove it, or check "include flagged secrets anyway."';
+      ds.style.display = 'block';
+      return;
+    }
+    el('downloadStatus').style.display = 'none';
+
     const zip = new JSZip();
     const fmObj = { name: skill.fixedName, description: skill.description };
     const fmYaml = jsyaml.dump(fmObj).trim();
     const skillMdContent = '---\n' + fmYaml + '\n---\n\n' + skill.instructions + '\n';
     zip.file('SKILL.md', skillMdContent);
-    const includeBlocked = el('includeBlockedCheckbox').checked;
-    const shippedBlocked = includeBlocked && skill.files.some(f => f.status === 'blocked');
+    const shippedBlocked = includeBlocked && (skill.files.some(f => f.status === 'blocked') || (skill.bodySecrets && skill.bodySecrets.length));
     skill.files
       .filter(f => f.status === 'ok' || f.status === 'warn' || (includeBlocked && f.status === 'blocked'))
       .forEach(f => zip.file(f.path, f.content));
