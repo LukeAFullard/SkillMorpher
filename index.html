@@ -19,6 +19,7 @@
 <script src="src/providers/browser-local-provider.js"></script>
 <script src="src/providers/index.js"></script>
 <script src="src/translator.js"></script>
+<script src="src/benchmark-corpus.js"></script>
 
 <style>
   :root{
@@ -418,6 +419,11 @@
     <div id="translationPanel" style="margin-top:14px; border-top:1px dashed var(--line); padding-top:12px;">
       <button id="translateBtn" class="primary">Translate to Gemini</button>
       <div id="translationSummary" style="font-size:12.5px; margin-top:8px;"></div>
+      <div id="qualityScoreCard" style="display:none; margin-top:10px; background:var(--paper-2); padding:10px; border-radius:3px; font-size:12.5px; border:1px solid var(--line);">
+        <div style="font-weight:700; font-family:var(--type); text-transform:uppercase; margin-bottom:6px;">Translation Quality Assessment</div>
+        <div id="qualityScoreMetrics" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:8px;"></div>
+        <div style="font-size:11px; opacity:0.75; margin-top:6px;">Note: SkillMorpher's assessment based on semantic preservation and Gemini constraints.</div>
+      </div>
       <div id="diffContainer" style="display:none; margin-top:10px;">
         <label class="small">Translation Diff</label>
         <table class="diff-table">
@@ -1085,6 +1091,29 @@
       const errStr = transRes.providerError ? ` (Browser model fallback: ${transRes.providerError}, using deterministic engine)` : '';
       summaryEl.textContent = `${modeStr} completed${errStr}: ${transRes.changesCount} change(s) applied (HIGH: ${transRes.confidenceCounts.HIGH}, MED: ${transRes.confidenceCounts.MEDIUM}, LOW: ${transRes.confidenceCounts.LOW}, MANUAL REVIEW: ${transRes.manualReviewCount}).`;
 
+      // Post-translation deterministic re-validation
+      const postVal = Validator.validateSkill(state.currentSkill, state.targetProfile);
+      postVal.translation.changesCount = transRes.changesCount;
+      renderPipelineStages(postVal);
+
+      // Quality score rendering
+      const qsCard = el('qualityScoreCard');
+      const qsMetrics = el('qualityScoreMetrics');
+      const qs = (typeof Translator !== 'undefined' && Translator.calculateQualityScore)
+        ? Translator.calculateQualityScore(state.currentSkill, transRes, postVal)
+        : transRes.qualityScore;
+
+      if (qsCard && qsMetrics && qs) {
+        qsCard.style.display = 'block';
+        qsMetrics.innerHTML = `
+          <div class="stage-box"><div class="label">Semantic Preservation</div><div class="val">${qs.semanticPreservation}%</div></div>
+          <div class="stage-box"><div class="label">Gemini Compatibility</div><div class="val">${qs.geminiCompatibility}%</div></div>
+          <div class="stage-box"><div class="label">Manual Review</div><div class="val">${qs.manualReviewCount}</div></div>
+          <div class="stage-box"><div class="label">Potential Issues</div><div class="val">${qs.potentialIssuesCount}</div></div>
+          <div class="stage-box pass"><div class="label">Overall Quality</div><div class="val">${qs.overall}%</div></div>
+        `;
+      }
+
       const diffContainer = el('diffContainer');
       const tbody = el('diffTbody');
       tbody.innerHTML = '';
@@ -1099,11 +1128,6 @@
       } else {
         diffContainer.style.display = 'none';
       }
-
-      // Post-translation deterministic re-validation
-      const postVal = Validator.validateSkill(state.currentSkill, state.targetProfile);
-      postVal.translation.changesCount = transRes.changesCount;
-      renderPipelineStages(postVal);
     } finally {
       btn.disabled = false;
       btn.textContent = 'Translate to Gemini';

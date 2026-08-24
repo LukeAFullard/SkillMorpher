@@ -13,6 +13,7 @@ const Validator = require('./src/validator');
 const BrowserLocalProvider = require('./src/providers/browser-local-provider');
 const TranslationProviders = require('./src/providers/index');
 const Translator = require('./src/translator');
+const BenchmarkCorpus = require('./src/benchmark-corpus');
 
 test('index.html exists and is non-empty', () => {
   const content = fs.readFileSync('index.html', 'utf8');
@@ -211,11 +212,11 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting and hardware 
   const provider = new BrowserLocalProvider();
   const models = BrowserLocalProvider.getModels();
 
-  assert.strictEqual(models.length, 5);
+  assert.strictEqual(models.length, 2);
   const defaultModel = models.find(m => m.recommended);
   assert.ok(defaultModel);
-  assert.strictEqual(defaultModel.id, 'gemma-4-12b-it-webgpu');
-  assert.strictEqual(defaultModel.context, '256K');
+  assert.strictEqual(defaultModel.id, 'gemma-4-e4b-it-webgpu');
+  assert.strictEqual(defaultModel.context, '128K');
 
   const e2b = models.find(m => m.id === 'gemma-4-e2b-it-webgpu');
   assert.ok(e2b);
@@ -242,7 +243,7 @@ test('Translator translateWithProvider routing and fallback behavior for Gemma 4
 
   const resFailing = await Translator.translateWithProvider({
     provider: failingProvider,
-    model: 'gemma-4-12b-it-webgpu',
+    model: 'gemma-4-e4b-it-webgpu',
     skill,
     targetKey: 'geminiSpark'
   });
@@ -263,14 +264,14 @@ test('Translator translateWithProvider routing and fallback behavior for Gemma 4
 
   const resSuccess = await Translator.translateWithProvider({
     provider: successProvider,
-    model: 'gemma-4-12b-it-webgpu',
+    model: 'gemma-4-e4b-it-webgpu',
     skill,
     targetKey: 'geminiSpark'
   });
 
   assert.strictEqual(resSuccess.mode, 'provider');
   assert.strictEqual(resSuccess.providerId, 'browser-local');
-  assert.strictEqual(resSuccess.model, 'gemma-4-12b-it-webgpu');
+  assert.strictEqual(resSuccess.model, 'gemma-4-e4b-it-webgpu');
 });
 
 test('Credential scanning, platform jargon detection, extractTopics, and path sanitization helper functions', () => {
@@ -762,7 +763,7 @@ test('End-to-End Pipeline on 8 Real Test Skills (Import -> Analyse -> Local Tran
     const provider = new BrowserLocalProvider();
     const transRes = await Translator.translateWithProvider({
       provider,
-      model: 'gemma-4-12b-it-webgpu',
+      model: 'gemma-4-e4b-it-webgpu',
       skill: {
         instructions: rawSkill.instructions,
         description: rawSkill.description
@@ -796,4 +797,23 @@ test('End-to-End Pipeline on 8 Real Test Skills (Import -> Analyse -> Local Tran
       assert.ok(packageFiles.has(f.path), `Package should contain file ${f.path}`);
     });
   }
+});
+
+test('Benchmark Corpus of 30 Representative Skills and Benchmark Runner Suite', () => {
+  assert.ok(BenchmarkCorpus, 'BenchmarkCorpus module should exist');
+  assert.strictEqual(BenchmarkCorpus.BENCHMARK_SKILLS.length, 30, 'Benchmark corpus must contain exactly 30 representative skills');
+
+  const categories = new Set(BenchmarkCorpus.BENCHMARK_SKILLS.map(s => s.category));
+  assert.ok(categories.has('Claude'), 'Corpus should contain Claude skills');
+  assert.ok(categories.has('OpenAI/Codex'), 'Corpus should contain OpenAI skills');
+  assert.ok(categories.has('Script-heavy'), 'Corpus should contain Script-heavy skills');
+  assert.ok(categories.has('Browser-dependent'), 'Corpus should contain Browser-dependent skills');
+
+  const benchmarkResults = BenchmarkCorpus.runBenchmarkSuite(Validator, Translator, new BrowserLocalProvider());
+
+  assert.strictEqual(benchmarkResults.totalSkills, 30);
+  assert.ok(benchmarkResults.passedInitialValidation > 20);
+  assert.ok(benchmarkResults.passedPostValidation > 20);
+  assert.ok(benchmarkResults.averageQualityScore >= 80, `Average quality score should be >= 80 (was ${benchmarkResults.averageQualityScore})`);
+  assert.ok(benchmarkResults.manualReviewsTriggered > 0, 'Manual reviews should be triggered for browser-dependent or incompatible tools');
 });

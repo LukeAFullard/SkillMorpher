@@ -19,6 +19,50 @@
 }(typeof self !== 'undefined' ? self : this, function (PlatformDetector, Capabilities, GeminiSparkMappings, BrowserLocalProvider) {
   'use strict';
 
+  function calculateQualityScore(originalSkill, translatedResult, postValidation) {
+    if (!translatedResult) return null;
+
+    // 1. Gemini Compatibility (0 to 100)
+    let geminiComp = 100;
+    if (postValidation && postValidation.security && postValidation.security.blockers && postValidation.security.blockers.length) {
+      geminiComp -= postValidation.security.blockers.length * 25;
+    }
+    if (postValidation && postValidation.gemini && postValidation.gemini.status === 'NEEDS TRANSLATION') {
+      geminiComp -= 15;
+    }
+    geminiComp = Math.max(0, Math.min(100, geminiComp));
+
+    // 2. Manual Review Count
+    const manualReviewCount = translatedResult.manualReviewCount || (translatedResult.warnings ? translatedResult.warnings.length : 0);
+
+    // 3. Potential Issues Count
+    const potentialIssuesCount = postValidation
+      ? (postValidation.files ? postValidation.files.issues.length : 0) + (postValidation.structure ? postValidation.structure.issues.length : 0)
+      : 0;
+
+    // 4. Semantic Preservation (0 to 100)
+    let semanticPreservation = 100;
+    if (manualReviewCount > 0) semanticPreservation -= manualReviewCount * 5;
+    if (potentialIssuesCount > 0) semanticPreservation -= potentialIssuesCount * 3;
+    if (translatedResult.confidenceCounts) {
+      const lowOrNone = (translatedResult.confidenceCounts.LOW || 0) + (translatedResult.confidenceCounts.NONE || 0);
+      semanticPreservation -= lowOrNone * 4;
+    }
+    semanticPreservation = Math.max(0, Math.min(100, semanticPreservation));
+
+    // Overall Score
+    const overall = Math.round((semanticPreservation * 0.4) + (geminiComp * 0.6));
+
+    return {
+      semanticPreservation,
+      geminiCompatibility: geminiComp,
+      manualReviewCount,
+      potentialIssuesCount,
+      overall,
+      assessmentDisclaimer: "SkillMorpher's assessment"
+    };
+  }
+
   function translateSkill(skill, targetKey = 'geminiSpark') {
     if (!skill) return null;
 
@@ -119,7 +163,7 @@
       NONE: changes.filter(c => c.confidence === 'NONE' || c.manualReviewRequired).length
     };
 
-    return {
+    const baseResult = {
       translatedBody,
       translatedDesc,
       changesCount: changes.length,
@@ -129,6 +173,9 @@
       confidenceCounts,
       diff
     };
+
+    baseResult.qualityScore = calculateQualityScore(skill, baseResult, null);
+    return baseResult;
   }
 
   function generateAIPrompt(skill, targetKey = 'geminiSpark') {
@@ -188,7 +235,8 @@ Return ONLY the updated instructions string.`;
 
   async function translateWithProvider({ provider, model, skill, analysis, targetKey = 'geminiSpark' }) {
     if (!provider || typeof provider.translate !== 'function') {
-      return { ...translateSkill(skill, targetKey), mode: 'deterministic' };
+      const det = translateSkill(skill, targetKey);
+      return { ...det, mode: 'deterministic' };
     }
 
     try {
@@ -214,6 +262,7 @@ Return ONLY the updated instructions string.`;
   }
 
   return {
+    calculateQualityScore,
     translateSkill,
     generateAIPrompt,
     translateSkillAI,
