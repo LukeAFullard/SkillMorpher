@@ -40,21 +40,22 @@
       ? (postValidation.files ? postValidation.files.issues.length : 0) + (postValidation.structure ? postValidation.structure.issues.length : 0)
       : 0;
 
-    // 4. Semantic Preservation (0 to 100)
-    let semanticPreservation = 100;
-    if (manualReviewCount > 0) semanticPreservation -= manualReviewCount * 5;
-    if (potentialIssuesCount > 0) semanticPreservation -= potentialIssuesCount * 3;
+    // 4. Translation Risk Score (0 to 100, higher means lower risk / higher preservation)
+    let translationRiskScore = 100;
+    if (manualReviewCount > 0) translationRiskScore -= manualReviewCount * 5;
+    if (potentialIssuesCount > 0) translationRiskScore -= potentialIssuesCount * 3;
     if (translatedResult.confidenceCounts) {
       const lowOrNone = (translatedResult.confidenceCounts.LOW || 0) + (translatedResult.confidenceCounts.NONE || 0);
-      semanticPreservation -= lowOrNone * 4;
+      translationRiskScore -= lowOrNone * 4;
     }
-    semanticPreservation = Math.max(0, Math.min(100, semanticPreservation));
+    translationRiskScore = Math.max(0, Math.min(100, translationRiskScore));
 
     // Overall Score
-    const overall = Math.round((semanticPreservation * 0.4) + (geminiComp * 0.6));
+    const overall = Math.round((translationRiskScore * 0.4) + (geminiComp * 0.6));
 
     return {
-      semanticPreservation,
+      translationRiskScore,
+      semanticPreservation: translationRiskScore,
       geminiCompatibility: geminiComp,
       manualReviewCount,
       potentialIssuesCount,
@@ -101,15 +102,11 @@
       }
     });
 
-    // 2. Terminology & Filesystem Rewriting
+    // 2. Filesystem & Environment Path Normalization (Avoid unsafe platform term string substitutions)
     const termRewrites = [
-      { pattern: /\bClaude Code\b/gi, replacement: 'Gemini', confidence: 'HIGH', term: 'Claude Code' },
-      { pattern: /\bclaude\.ai\b/gi, replacement: 'Gemini', confidence: 'HIGH', term: 'claude.ai' },
       { pattern: /\b\/mnt\/data\b/gi, replacement: 'skill/workspace file path', confidence: 'HIGH', term: '/mnt/data' },
       { pattern: /\b\/mnt\/skills\b/gi, replacement: 'skill folder', confidence: 'HIGH', term: '/mnt/skills' },
-      { pattern: /\b\/mnt\/user-data\b/gi, replacement: 'user workspace', confidence: 'HIGH', term: '/mnt/user-data' },
-      { pattern: /\bchatgpt\b/gi, replacement: 'Gemini', confidence: 'MEDIUM', term: 'chatgpt' },
-      { pattern: /\bcodex\b/gi, replacement: 'Gemini execution runtime', confidence: 'MEDIUM', term: 'codex' }
+      { pattern: /\b\/mnt\/user-data\b/gi, replacement: 'user workspace', confidence: 'HIGH', term: '/mnt/user-data' }
     ];
 
     termRewrites.forEach(tr => {

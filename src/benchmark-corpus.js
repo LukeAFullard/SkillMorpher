@@ -320,6 +320,215 @@
       files: [{ path: 'scripts/validate.py', content: 'print("Valid")', status: 'ok' }],
       expectedPlatform: 'Generic',
       expectedNeedsTranslation: false
+    },
+    {
+      id: 31,
+      category: 'MCP',
+      name: 'mcp-context-retrieval-skill',
+      description: 'Retrieves external context using Model Context Protocol (MCP) servers.',
+      instructions: 'Connect to MCP server `mcp://filesystem` and query resource context.',
+      files: [],
+      expectedPlatform: 'Anthropic',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 32,
+      category: 'Claude',
+      name: 'claude-web-search-researcher',
+      description: 'Researches topics using Claude search integration.',
+      instructions: 'Use the web_search tool to look up current documentation for Gemini Spark.',
+      files: [],
+      expectedPlatform: 'Anthropic',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 33,
+      category: 'OpenAI/Codex',
+      name: 'openai-gpt4o-file-parser',
+      description: 'Parses complex multi-modal PDF reports via GPT-4o.',
+      instructions: 'Use ChatGPT file search tool and gpt-4o vision to analyze report diagrams.',
+      files: [],
+      expectedPlatform: 'OpenAI',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 34,
+      category: 'Script-heavy',
+      name: 'python-pandas-aggregator',
+      description: 'Aggregates CSV metrics using Python pandas dataframe.',
+      instructions: 'Run `scripts/aggregate.py` to calculate summary statistics.',
+      files: [{ path: 'scripts/aggregate.py', content: 'import json\ndef agg(d): return sum(d)', status: 'ok' }],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 35,
+      category: 'Reference-heavy',
+      name: 'api-spec-openapi-checker',
+      description: 'Checks OpenAPI 3.0 YAML specification against guidelines.',
+      instructions: 'Read `references/openapi.yaml` and verify path definitions match standard rules.',
+      files: [{ path: 'references/openapi.yaml', content: 'openapi: 3.0.0\ninfo:\n  title: API', status: 'ok' }],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 36,
+      category: 'Browser-dependent',
+      name: 'browser-selenium-screen-grabber',
+      description: 'Takes website screenshots using headless Selenium chrome.',
+      instructions: 'Use computer tool and browser driver to navigate to URL and capture viewport screenshot.',
+      files: [],
+      expectedPlatform: 'Anthropic',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 37,
+      category: 'API-dependent',
+      name: 'slack-webhook-notifier',
+      description: 'Sends notification messages via Slack incoming webhooks.',
+      instructions: 'Execute `scripts/send_slack.py` using SLACK_WEBHOOK_URL token.',
+      files: [{ path: 'scripts/send_slack.py', content: 'import urllib.request\nprint("sent")', status: 'warn', reason: 'script calls network' }],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 38,
+      category: 'Unsupported capabilities',
+      name: 'gui-interactive-mouse-clicker',
+      description: 'Automates direct OS mouse clicks and desktop window control.',
+      instructions: 'Use computer_use to move mouse cursor to (100, 200) and double click.',
+      files: [],
+      expectedPlatform: 'Anthropic',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 39,
+      category: 'Complex',
+      name: 'full-stack-code-refactoring-suite',
+      description: 'Multi-stage code refactoring skill across frontend, backend, and schemas.',
+      instructions: 'Inspect `/mnt/data/src` using Bash tool, run `scripts/lint.py`, check `references/styles.json`, and apply `str_replace`.',
+      files: [
+        { path: 'scripts/lint.py', content: 'print("lint ok")', status: 'ok' },
+        { path: 'references/styles.json', content: '{"indent": 2}', status: 'ok' }
+      ],
+      expectedPlatform: 'Anthropic',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 40,
+      category: 'Claude',
+      name: 'claude-prompt-caching-optimizer',
+      description: 'Optimizes system prompts using Claude prompt caching headers.',
+      instructions: 'Insert anthropic-beta prompt caching markers around stable instruction context.',
+      files: [],
+      expectedPlatform: 'Anthropic',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 41,
+      category: 'OpenAI/Codex',
+      name: 'openai-custom-gpt-action',
+      description: 'Invokes external GPT action schema endpoints.',
+      instructions: 'Execute OpenAPI action request formatted for Assistants API runtime.',
+      files: [],
+      expectedPlatform: 'OpenAI',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 42,
+      category: 'MCP',
+      name: 'mcp-database-connector',
+      description: 'Queries relational database tables via MCP database tool server.',
+      instructions: 'Call MCP database tool `mcp://postgres/query` to select records.',
+      files: [],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 43,
+      category: 'Script-heavy',
+      name: 'node-json-formatter',
+      description: 'Formats and reformats JSON files using Node JS helper script.',
+      instructions: 'Run `scripts/format.js` to normalize JSON key indentation.',
+      files: [{ path: 'scripts/format.js', content: 'console.log("{}");', status: 'ok' }],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 44,
+      category: 'Reference-heavy',
+      name: 'graphql-schema-inspector',
+      description: 'Inspects GraphQL query types against reference schema document.',
+      instructions: 'Consult `references/schema.graphql` to verify query argument types.',
+      files: [{ path: 'references/schema.graphql', content: 'type Query { id: ID }', status: 'ok' }],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 45,
+      category: 'Browser-dependent',
+      name: 'puppeteer-pdf-generator',
+      description: 'Generates PDF files by rendering HTML in headless Chrome browser.',
+      instructions: 'Launch Puppeteer browser instance, load template HTML, and output PDF.',
+      files: [],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 46,
+      category: 'API-dependent',
+      name: 'github-graphql-api-fetcher',
+      description: 'Queries GitHub GraphQL API for repository issue stats.',
+      instructions: 'Run `scripts/fetch_issues.py` with GITHUB_TOKEN credential.',
+      files: [{ path: 'scripts/fetch_issues.py', content: 'import requests\nprint("issues")', status: 'warn', reason: 'script calls network' }],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 47,
+      category: 'Unsupported capabilities',
+      name: 'hardware-usb-device-controller',
+      description: 'Controls connected USB hardware devices directly.',
+      instructions: 'Send raw webusb packets to connected hardware microcontroller.',
+      files: [],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 48,
+      category: 'Complex',
+      name: 'devops-ci-pipeline-migration-skill',
+      description: 'Migrates GitHub Actions workflow pipelines to Gemini Spark execution.',
+      instructions: 'Parse `.github/workflows/ci.yml`, run `scripts/validate_workflow.py`, and check `references/spark_matrix.md`.',
+      files: [
+        { path: 'scripts/validate_workflow.py', content: 'print("valid")', status: 'ok' },
+        { path: 'references/spark_matrix.md', content: '# Matrix', status: 'ok' }
+      ],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
+    },
+    {
+      id: 49,
+      category: 'Claude',
+      name: 'claude-thinking-budget-allocator',
+      description: 'Allocates extended reasoning thinking token budget.',
+      instructions: 'Configure Claude extended thinking budget to 4096 tokens for complex math.',
+      files: [],
+      expectedPlatform: 'Anthropic',
+      expectedNeedsTranslation: true
+    },
+    {
+      id: 50,
+      category: 'Compliant',
+      name: 'spark-standard-python-analytics-skill',
+      description: 'Fully compliant Gemini Spark data analysis skill with clean Python script and markdown guide.',
+      instructions: 'Inspect input CSV data files and execute `scripts/analyze.py` to generate summary reports.',
+      files: [
+        { path: 'scripts/analyze.py', content: 'def process(): pass', status: 'ok' },
+        { path: 'references/guide.md', content: '# Analysis Guide', status: 'ok' }
+      ],
+      expectedPlatform: 'Generic',
+      expectedNeedsTranslation: false
     }
   ];
 
