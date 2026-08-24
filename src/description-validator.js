@@ -9,7 +9,7 @@
 }(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const PLATFORM_TERMS_RE = /\b(claude|anthropic|openai|chatgpt|codex|gpt-4|gpt-3\.5|spark)\b/i;
+  const PLATFORM_TERMS_RE = /\b(claude|anthropic|openai|chatgpt|codex|gpt-4|gpt-3\.5)\b/i;
   const TRIGGER_WORDS_RE = /\b(when|use|if|mentions|requires|helps|for|allows|provides|handles|extracts|creates|modifies|converts)\b/i;
 
   function validateDescription(desc, name) {
@@ -38,7 +38,7 @@
     let suggested = desc;
     if (isWeak || !desc) {
       const cleanName = (name || 'this-skill').replace(/-/g, ' ');
-      suggested = `Automates tasks related to ${cleanName}. Use when the user mentions ${cleanName}, request file processing, or need automated workflows for ${cleanName}.`;
+      suggested = `Automates tasks related to ${cleanName}. Use when the user mentions ${cleanName}, requests file processing, or needs automated workflows for ${cleanName}.`;
     }
 
     return {

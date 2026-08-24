@@ -35,7 +35,9 @@
     },
     geminiCli: {
       id: 'geminiCli',
-      name: 'Gemini CLI',
+      name: 'Gemini CLI (Experimental / Unverified)',
+      experimental: true,
+      description: 'Experimental CLI target profile (unverified SKILL.md package support)',
       maxPackageSize: 200 * 1024 * 1024, // 200 MB
       allowedExtensions: '*', // flexible runtime
       allowedBasenames: '*',

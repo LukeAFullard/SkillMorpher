@@ -1,6 +1,6 @@
 # SkillMorpher
 
-**SkillMorpher** is a client-side web application designed to audit, convert, and translate Agent Skills (`SKILL.md` bundles) into custom, compliant skill packages optimized for Gemini Spark and Gemini CLI targets.
+**SkillMorpher** is a client-side web application designed to audit, convert, and translate Agent Skills (`SKILL.md` bundles) into custom, compliant skill packages optimized for Gemini Spark (and experimental/unverified Gemini CLI) targets.
 
 ## Features
 
@@ -44,7 +44,7 @@
 - `src/`: Modular UMD JavaScript pipeline scripts:
   - `src/platform-detector.js`: Identifies platform-specific terminology and tool usages.
   - `src/capabilities.js`: Capability graph and mapping analyzer.
-  - `src/targets.js`: Target profile specifications (Gemini Spark & Gemini CLI).
+  - `src/targets.js`: Target profile specifications (Gemini Spark & experimental Gemini CLI).
   - `src/resource-graph.js`: Analyzes local resource file references and dependencies.
   - `src/script-analyzer.js`: Audits Python/JS scripts for external network socket calls.
   - `src/description-validator.js`: Validates trigger descriptions and provides recommendations.
@@ -55,7 +55,7 @@
 - External Dependencies (via CDN):
   - [JSZip (v3.10.1)](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js): Zip archive reading and creation.
   - [js-yaml (v4.1.0)](https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js): YAML frontmatter parsing and dumping.
-  - [Transformers.js (v3.3.3)](https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js): Transformers.js ONNX WebGPU runtime for browser AI inference.
+  - [Transformers.js (v4)](https://cdn.jsdelivr.net/npm/@huggingface/transformers@4): Transformers.js ONNX WebGPU runtime for browser AI inference.
 
 ## Getting Started / Local Development
 

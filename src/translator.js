@@ -218,6 +218,9 @@ Return ONLY the updated instructions string.`;
       if (!llmText) throw new Error('Empty response from Gemini API');
 
       const aiSkill = { ...skill, instructions: llmText.trim() };
+      // Note: We pass AI-generated output back through translateSkill as a deterministic post-processing
+      // pass to normalize residual platform-specific paths (/mnt/data, /mnt/skills), detect unhandled
+      // manual review blockers, and compute diff and quality scores.
       const deterministicRes = translateSkill(aiSkill, targetKey);
       return {
         ...deterministicRes,
@@ -242,6 +245,8 @@ Return ONLY the updated instructions string.`;
     try {
       const res = await provider.translate({ skill, analysis, target: targetKey, model });
       const aiSkill = { ...skill, instructions: res.translatedBody };
+      // Note: We pass provider AI output through translateSkill to ensure deterministic normalization
+      // of filesystem paths, count manual review warnings, and build structured line-by-line diffs.
       const deterministicPost = translateSkill(aiSkill, targetKey);
       return {
         ...deterministicPost,

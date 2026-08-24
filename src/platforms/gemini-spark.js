@@ -13,7 +13,7 @@
     {
       platform: 'Anthropic',
       sourceTerm: 'Bash tool',
-      pattern: /Use the Bash tool to inspect the repository/i,
+      pattern: /\buse\s+(the\s+)?bash\s+tool\s+to\s+inspect\b[^\n.]*/i,
       replacement: 'Inspect the repository files available to you',
       targetCapability: 'shellExecution',
       confidence: 'HIGH'
@@ -21,7 +21,7 @@
     {
       platform: 'Anthropic',
       sourceTerm: 'Bash command',
-      pattern: /\b(Run|use):\s*`find \. -type f`/i,
+      pattern: /\b(run|use):?\s*`find\s+\.\s+-type\s+f`/i,
       replacement: 'When you need to understand the repository structure, inspect the available files and directories.',
       targetCapability: 'shellExecution',
       confidence: 'HIGH'
@@ -29,7 +29,7 @@
     {
       platform: 'Anthropic',
       sourceTerm: 'Claude Read tool',
-      pattern: /Use the Claude Read tool to inspect relevant files/i,
+      pattern: /\buse\s+(the\s+)?claude\s+read\s+tool\s+to\s+inspect\b[^\n.]*/i,
       replacement: 'Read the relevant files before making changes.',
       targetCapability: 'fileRead',
       confidence: 'HIGH'
@@ -37,7 +37,7 @@
     {
       platform: 'Anthropic',
       sourceTerm: 'str_replace',
-      pattern: /Use `str_replace` to modify the target file\./i,
+      pattern: /\buse\s+`str_replace`\s+to\s+modify\b[^\n.]*/i,
       replacement: 'Modify the target file directly while preserving unrelated content.',
       targetCapability: 'fileWrite',
       confidence: 'HIGH'

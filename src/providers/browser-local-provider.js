@@ -68,7 +68,7 @@
   async function loadTransformersRuntime(globalObj) {
     if (globalObj.transformers || globalObj.Transformers) return globalObj.transformers || globalObj.Transformers;
     if (globalObj.__transformersModule) return globalObj.__transformersModule;
-    const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3');
+    const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4');
     globalObj.__transformersModule = mod;
     return mod;
   }
