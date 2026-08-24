@@ -16,6 +16,8 @@ test('index.html contains expected DOM element IDs and script logic', () => {
   const expectedIds = [
     'customRepo',
     'loadRepoBtn',
+    'auditAllBtn',
+    'auditStatus',
     'pasteArea',
     'parsePasteBtn',
     'fileInput',
@@ -26,6 +28,7 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'downloadBtn',
     'includeBlockedCheckbox',
     'bodyCredBanner',
+    'platformBanner',
     'downloadStatus'
   ];
 
@@ -39,6 +42,7 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'toKebabCase',
     'scanForNetworkCalls',
     'scanForCredentials',
+    'scanForPlatformJargon',
     'sanitizeZipPath',
     'parseSkillMd',
     'renderManifest'
@@ -61,16 +65,16 @@ test('JavaScript syntax is valid in index.html', () => {
   }, 'Inline JavaScript should compile without syntax errors');
 });
 
-test('Credential scanning and path sanitization helper functions', () => {
+test('Credential scanning, platform jargon detection, and path sanitization helper functions', () => {
   const html = fs.readFileSync('index.html', 'utf8');
   const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, '<script> block should exist');
 
   const jsCode = scriptMatch[1];
-  // Extract and evaluate scanForCredentials and sanitizeZipPath with dummy DOM
+  // Extract and evaluate scanForCredentials, scanForPlatformJargon, and sanitizeZipPath with dummy DOM
   const mockScript = jsCode
     .replace(/await /g, '')
-    .replace(/\(function\(\)\{/, '(function(){\n  global.scanForCredentials = scanForCredentials;\n  global.sanitizeZipPath = sanitizeZipPath;\n');
+    .replace(/\(function\(\)\{/, '(function(){\n  global.scanForCredentials = scanForCredentials;\n  global.scanForPlatformJargon = scanForPlatformJargon;\n  global.sanitizeZipPath = sanitizeZipPath;\n');
 
   const fnEvaluator = new Function(`
     const dummyEl = { classList: { remove: () => {}, add: () => {} }, style: {}, addEventListener: () => {}, appendChild: () => {} };
@@ -80,9 +84,9 @@ test('Credential scanning and path sanitization helper functions', () => {
       createElement: () => dummyEl
     };
     ${mockScript}
-    return { scanForCredentials: global.scanForCredentials, sanitizeZipPath: global.sanitizeZipPath };
+    return { scanForCredentials: global.scanForCredentials, scanForPlatformJargon: global.scanForPlatformJargon, sanitizeZipPath: global.sanitizeZipPath };
   `);
-  const { scanForCredentials, sanitizeZipPath } = fnEvaluator();
+  const { scanForCredentials, scanForPlatformJargon, sanitizeZipPath } = fnEvaluator();
 
   // Test Anthropic key (literal secret)
   const antResult = scanForCredentials('KEY="sk-ant-api03-12345678901234567890"');
@@ -120,6 +124,19 @@ test('Credential scanning and path sanitization helper functions', () => {
 
   const softProseIncludedResult = scanForCredentials('Please supply your api_key here', true);
   assert.strictEqual(softProseIncludedResult.hasKeyReference, true, 'Bare "api_key" should trigger soft hasKeyReference when includeSoft=true');
+
+  // Test platform jargon detection
+  const claudeJargon = scanForPlatformJargon('Use the bash tool in /mnt/skills/ dir');
+  assert.deepStrictEqual(claudeJargon, ['Claude/Anthropic-specific']);
+
+  const openaiJargon = scanForPlatformJargon('Run Code Interpreter and call Assistants API');
+  assert.deepStrictEqual(openaiJargon, ['OpenAI-specific']);
+
+  const bothJargon = scanForPlatformJargon('Use chatgpt and claude.ai');
+  assert.deepStrictEqual(bothJargon, ['Claude/Anthropic-specific', 'OpenAI-specific']);
+
+  const cleanJargon = scanForPlatformJargon('Standard instructions for gemini spark');
+  assert.deepStrictEqual(cleanJargon, []);
 
   // Test path sanitizer with ../../evil.js
   const sanitized = sanitizeZipPath('../../evil.js');
@@ -193,10 +210,16 @@ test('renderManifest and body credential scanning state/UI behavior', () => {
   assert.strictEqual(state.currentSkill.bodyKeyReference, false);
   assert.deepStrictEqual(state.currentSkill.bodySecrets, []);
   assert.strictEqual(mockDoc.getElementById('bodyCredBanner').style.display, 'none');
+  assert.strictEqual(mockDoc.getElementById('platformBanner').style.display, 'none');
 
   const fileListClean = mockDoc.getElementById('fileManifest');
   assert.ok(fileListClean.children[0].innerHTML.includes('SKILL.md'));
   assert.ok(fileListClean.children[0].innerHTML.includes('stamp-tag ok'));
+
+  // Test 1b: Body with platform jargon
+  renderManifest('test source', { name: 'my-skill', description: 'Use the bash tool' }, 'Instructions on claude.ai', []);
+  assert.strictEqual(mockDoc.getElementById('platformBanner').style.display, 'block');
+  assert.ok(mockDoc.getElementById('platformBanner').textContent.includes('Claude/Anthropic-specific'));
 
   // Test 2: Body with key reference (OPENAI_API_KEY example)
   renderManifest('test source', { name: 'my-skill', description: 'OPENAI_API_KEY required' }, 'Instructions here', []);
