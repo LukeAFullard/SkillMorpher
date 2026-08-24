@@ -13,57 +13,24 @@
     {
       id: 'gemma-4-e2b-it-webgpu',
       name: 'Gemma 4 E2B IT (Edge / Fast)',
-      runtime: 'WebLLM',
+      runtime: 'WebLLM / ONNX WebGPU',
       size: '1.1 GB',
       sizeBytes: 1.1 * 1024 * 1024 * 1024,
       context: '128K',
       recommended: false,
-      tier: 'light',
+      tier: 'fast',
       requirements: { webgpu: true, minVramMB: 1536 }
     },
     {
       id: 'gemma-4-e4b-it-webgpu',
-      name: 'Gemma 4 E4B IT (Edge / Balanced)',
-      runtime: 'WebLLM',
+      name: 'Gemma 4 E4B IT (Edge / Higher Quality)',
+      runtime: 'WebLLM / ONNX WebGPU',
       size: '2.2 GB',
       sizeBytes: 2.2 * 1024 * 1024 * 1024,
       context: '128K',
-      recommended: false,
-      tier: 'standard-light',
-      requirements: { webgpu: true, minVramMB: 3072 }
-    },
-    {
-      id: 'gemma-4-12b-it-webgpu',
-      name: 'Gemma 4 12B IT (Default Target)',
-      runtime: 'WebLLM',
-      size: '6.8 GB',
-      sizeBytes: 6.8 * 1024 * 1024 * 1024,
-      context: '256K',
       recommended: true,
-      tier: 'default',
-      requirements: { webgpu: true, minVramMB: 8192 }
-    },
-    {
-      id: 'gemma-4-26b-a4b-it-webgpu',
-      name: 'Gemma 4 26B A4B IT (MoE High Quality)',
-      runtime: 'WebLLM',
-      size: '12.5 GB',
-      sizeBytes: 12.5 * 1024 * 1024 * 1024,
-      context: '256K',
-      recommended: false,
-      tier: 'pro',
-      requirements: { webgpu: true, minVramMB: 12288 }
-    },
-    {
-      id: 'gemma-4-31b-it-webgpu',
-      name: 'Gemma 4 31B IT (Max Quality)',
-      runtime: 'WebLLM',
-      size: '18.0 GB',
-      sizeBytes: 18.0 * 1024 * 1024 * 1024,
-      context: '256K',
-      recommended: false,
-      tier: 'ultra',
-      requirements: { webgpu: true, minVramMB: 20480 }
+      tier: 'balanced',
+      requirements: { webgpu: true, minVramMB: 3072 }
     }
   ];
 
@@ -77,6 +44,24 @@
 
     static getModels() {
       return MODELS;
+    }
+
+    getStatus() {
+      return {
+        loaded: !!this.loadedEngine,
+        currentModelId: this.currentModelId || null,
+        provider: this.id
+      };
+    }
+
+    getCapabilities() {
+      return {
+        localInference: true,
+        offlineCapable: true,
+        webgpuRequired: true,
+        supportedTargets: ['geminiSpark', 'geminiCli'],
+        outputFormat: 'json_object'
+      };
     }
 
     async checkHardwareSupport() {
@@ -147,6 +132,17 @@
       }
     }
 
+    async unloadModel() {
+      if (this.loadedEngine) {
+        if (typeof this.loadedEngine.unload === 'function') {
+          await this.loadedEngine.unload();
+        }
+        this.loadedEngine = null;
+      }
+      this.currentModelId = null;
+      return true;
+    }
+
     buildStructuredPrompt({ skill, analysis, target = 'gemini-spark' }) {
       const payload = {
         source_platform: (analysis && analysis.gemini && analysis.gemini.sourcePlatform) || 'generic',
@@ -165,8 +161,16 @@ Translate the provided Agent Skill instructions to be functionally equivalent fo
 Deterministic Context Payload:
 ${JSON.stringify(payload, null, 2)}
 
+Explicit Conservative Translation Rules:
+1. Equivalent capability -> Translate to direct Gemini equivalent instruction.
+2. Unsupported capability (e.g. browser automation, computer_use, interactive UI) -> Flag in manual_review array and add a clear "## Manual review required" block. Do not invent fake capabilities.
+3. Ambiguous capability -> Flag for review.
+4. Platform-specific wording -> Rewrite into clean platform-agnostic Gemini instructions.
+5. Missing dependency -> Flag in manual_review.
+6. Never silently remove functionality without flagging it.
+
 Requirements:
-1. Return ONLY valid JSON in the following schema:
+Return ONLY valid JSON with the following exact schema:
 {
   "translated_skill_md": "Full translated SKILL.md body text",
   "changes": [
@@ -179,13 +183,11 @@ Requirements:
   ],
   "manual_review": [
     {
-      "issue": "capability name",
+      "issue": "capability or dependency name",
       "reason": "explanation why manual review is required"
     }
   ]
-}
-2. Preserve progressive disclosure and do not silently invent equivalent capabilities for unsupported tools like browser automation or computer_use.
-3. Replace Claude/OpenAI tools with direct file/command Gemini equivalent instructions.`;
+}`;
     }
 
     async loadModel(modelId, progressCallback) {
@@ -194,8 +196,9 @@ Requirements:
         throw new Error(hw.reason);
       }
 
-      if (typeof root !== 'undefined' && root.webllm) {
-        const engine = await root.webllm.CreateMLCEngine(modelId, {
+      const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
+      if (globalObj && globalObj.webllm) {
+        const engine = await globalObj.webllm.CreateMLCEngine(modelId, {
           initProgressCallback: (report) => {
             if (progressCallback) progressCallback(report);
           }
@@ -210,10 +213,11 @@ Requirements:
       return null;
     }
 
-    async translate({ skill, analysis, target = 'gemini-spark', model = 'gemma-4-12b-it-webgpu', progressCallback }) {
+    async translate({ skill, analysis, target = 'gemini-spark', model = 'gemma-4-e4b-it-webgpu', progressCallback }) {
       const prompt = this.buildStructuredPrompt({ skill, analysis, target });
 
-      if (typeof window !== 'undefined' && window.webllm && !this.loadedEngine) {
+      const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
+      if (globalObj && globalObj.webllm && !this.loadedEngine) {
         await this.loadModel(model, progressCallback);
       }
 
@@ -248,7 +252,6 @@ Requirements:
         };
       }
 
-      // Fallback response parsing simulation for unit tests/offline stub
       throw new Error('WebLLM runtime unavailable in environment');
     }
   }
