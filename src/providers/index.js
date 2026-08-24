@@ -1,24 +1,29 @@
 (function (root, factory) {
   if (typeof define === 'function' && define.amd) {
-    define(['./ollama-provider'], factory);
+    define(['./browser-local-provider'], factory);
   } else if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./ollama-provider'));
+    module.exports = factory(require('./browser-local-provider'));
   } else {
-    root.TranslationProviders = factory(root.OllamaProvider);
+    root.TranslationProviders = factory(root.BrowserLocalProvider);
   }
-}(typeof self !== 'undefined' ? self : this, function (OllamaProvider) {
+}(typeof self !== 'undefined' ? self : this, function (BrowserLocalProvider) {
   'use strict';
 
   const providers = {
-    ollama: new OllamaProvider()
+    'browser-local': new BrowserLocalProvider()
   };
 
-  function getProvider(id = 'ollama') {
-    return providers[id] || providers.ollama;
+  function getProvider(id = 'browser-local') {
+    return providers[id] || providers['browser-local'];
+  }
+
+  function registerProvider(id, instance) {
+    providers[id] = instance;
   }
 
   return {
     providers,
-    getProvider
+    getProvider,
+    registerProvider
   };
 }));

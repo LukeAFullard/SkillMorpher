@@ -6,17 +6,17 @@
       require('./platform-detector'),
       require('./capabilities'),
       require('./platforms/gemini-spark'),
-      require('./providers/ollama-provider')
+      require('./providers/browser-local-provider')
     );
   } else {
     root.Translator = factory(
       root.PlatformDetector,
       root.Capabilities,
       root.GeminiSparkMappings,
-      root.OllamaProvider
+      root.BrowserLocalProvider
     );
   }
-}(typeof self !== 'undefined' ? self : this, function (PlatformDetector, Capabilities, GeminiSparkMappings, OllamaProvider) {
+}(typeof self !== 'undefined' ? self : this, function (PlatformDetector, Capabilities, GeminiSparkMappings, BrowserLocalProvider) {
   'use strict';
 
   function translateSkill(skill, targetKey = 'geminiSpark') {

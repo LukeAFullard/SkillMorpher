@@ -10,7 +10,8 @@ const ResourceGraph = require('./src/resource-graph');
 const ScriptAnalyzer = require('./src/script-analyzer');
 const DescriptionValidator = require('./src/description-validator');
 const Validator = require('./src/validator');
-const OllamaProvider = require('./src/providers/ollama-provider');
+const BrowserLocalProvider = require('./src/providers/browser-local-provider');
+const TranslationProviders = require('./src/providers/index');
 const Translator = require('./src/translator');
 
 test('index.html exists and is non-empty', () => {
@@ -45,7 +46,15 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'pipelineStages',
     'translateBtn',
     'translationSummary',
-    'diffContainer'
+    'diffContainer',
+    'providerSelect',
+    'gpuStatusBadge',
+    'localModelBox',
+    'localModelSelect',
+    'downloadModelBtn',
+    'clearCacheBtn',
+    'modelSpecsInfo',
+    'modelTestStatus'
   ];
 
   for (const id of expectedIds) {
@@ -198,39 +207,40 @@ test('Translator AI prompt generation and unconfigured/offline fallback handling
   assert.ok(fallbackRes.translatedBody.includes('Inspect the repository files available to you'));
 });
 
-test('OllamaProvider structured prompt formatting and response validation', () => {
-  const provider = new OllamaProvider('http://localhost:11434');
+test('BrowserLocalProvider structured prompt formatting and hardware checking', async () => {
+  const provider = new BrowserLocalProvider();
   const skill = { instructions: 'Use the Bash tool to check code.', description: 'Test skill' };
   const analysis = { gemini: { sourcePlatform: 'anthropic' }, capabilities: ['shellExecution'] };
 
   const structuredPrompt = provider.buildStructuredPrompt({ skill, analysis, target: 'gemini-spark' });
   assert.ok(structuredPrompt.includes('"source_platform": "anthropic"'));
   assert.ok(structuredPrompt.includes('"translated_skill_md"'));
+
+  const hw = await provider.checkHardwareSupport();
+  assert.strictEqual(hw.supported, false); // Node environment has no navigator.gpu
+  assert.strictEqual(hw.status, 'UNSUPPORTED');
 });
 
 test('Translator translateWithProvider routing and fallback behavior', async () => {
   const skill = { instructions: 'Use the Bash tool to inspect the repository.', description: 'Test' };
 
-  // Mock failing provider
-  const failingProvider = {
-    id: 'ollama',
-    translate: async () => { throw new Error('Ollama offline'); }
-  };
+  // Mock failing provider (e.g. browser without WebGPU / WebLLM)
+  const failingProvider = new BrowserLocalProvider();
 
   const resFailing = await Translator.translateWithProvider({
     provider: failingProvider,
-    model: 'gemma4:12b',
+    model: 'gemma-2-2b-it-webgpu',
     skill,
     targetKey: 'geminiSpark'
   });
 
   assert.strictEqual(resFailing.mode, 'deterministic-fallback');
-  assert.strictEqual(resFailing.providerError, 'Ollama offline');
+  assert.ok(resFailing.providerError.includes('WebLLM'));
   assert.ok(resFailing.translatedBody.includes('Inspect the repository files available to you'));
 
   // Mock successful provider
   const successProvider = {
-    id: 'ollama',
+    id: 'browser-local',
     translate: async () => ({
       translatedBody: 'Inspect the repository available files.',
       changes: [{ original: 'Use the Bash tool', replacement: 'Inspect files', reason: 'Translated', confidence: 'high' }],
@@ -240,14 +250,14 @@ test('Translator translateWithProvider routing and fallback behavior', async () 
 
   const resSuccess = await Translator.translateWithProvider({
     provider: successProvider,
-    model: 'gemma4:12b',
+    model: 'gemma-2-2b-it-webgpu',
     skill,
     targetKey: 'geminiSpark'
   });
 
   assert.strictEqual(resSuccess.mode, 'provider');
-  assert.strictEqual(resSuccess.providerId, 'ollama');
-  assert.strictEqual(resSuccess.model, 'gemma4:12b');
+  assert.strictEqual(resSuccess.providerId, 'browser-local');
+  assert.strictEqual(resSuccess.model, 'gemma-2-2b-it-webgpu');
 });
 
 test('Credential scanning, platform jargon detection, extractTopics, and path sanitization helper functions', () => {
@@ -639,4 +649,138 @@ test('Security & Limits: Package size calculation and limit enforcement', () => 
 
   const hugeSize = calculatePackageSize(hugeSkill, false);
   assert.ok(hugeSize > MAX_TOTAL_UNCOMPRESSED_SIZE);
+});
+
+// Real Skill Integration Tests (Phase 10: 8 test scenarios)
+const REAL_TEST_SKILLS = [
+  {
+    name: '1. Claude skill',
+    skill: {
+      name: 'claude-file-editor',
+      description: 'Edits files using Claude tool conventions.',
+      instructions: 'Use the Bash tool to inspect files in /mnt/skills/.\nUse `str_replace` to update target lines.',
+      files: []
+    }
+  },
+  {
+    name: '2. OpenAI/Codex skill',
+    skill: {
+      name: 'openai-data-analyst',
+      description: 'Processes datasets via OpenAI runtime.',
+      instructions: 'Run Code Interpreter to summarize data.\nUse chatgpt and Assistants API to format results.',
+      files: []
+    }
+  },
+  {
+    name: '3. Generic Agent Skill',
+    skill: {
+      name: 'generic-summarizer',
+      description: 'Summarizes text documents.',
+      instructions: 'Read text and produce a concise 3-bullet point summary.',
+      files: []
+    }
+  },
+  {
+    name: '4. Skill with scripts',
+    skill: {
+      name: 'python-runner',
+      description: 'Executes clean python helper script.',
+      instructions: 'Run `scripts/helper.py` to format input.',
+      files: [{ path: 'scripts/helper.py', content: 'def run(): return 42\nif __name__ == "__main__": run()', status: 'ok' }]
+    }
+  },
+  {
+    name: '5. Skill with references',
+    skill: {
+      name: 'schema-validator',
+      description: 'Validates json against reference schema.',
+      instructions: 'Refer to `references/schema.json` to check fields.',
+      files: [{ path: 'references/schema.json', content: '{"type": "object"}', status: 'ok' }]
+    }
+  },
+  {
+    name: '6. Browser-dependent skill',
+    skill: {
+      name: 'web-automation-bot',
+      description: 'Navigates pages and clicks buttons.',
+      instructions: 'Use the `computer` tool to open browser and click buttons on screen.',
+      files: []
+    }
+  },
+  {
+    name: '7. API/network-dependent skill',
+    skill: {
+      name: 'weather-fetcher',
+      description: 'Fetches weather forecasts.',
+      instructions: 'Run `scripts/fetch_weather.py` with OPENAI_API_KEY.',
+      files: [{ path: 'scripts/fetch_weather.py', content: 'import requests\nrequests.get("https://api.weather.com")', status: 'warn', reason: 'script calls network' }]
+    }
+  },
+  {
+    name: '8. Complex multi-file skill',
+    skill: {
+      name: 'multi-file-pipeline',
+      description: 'Complex multi-file processing skill.',
+      instructions: 'Execute `scripts/process.py` using schema `references/config.yaml` and asset `assets/template.txt`.',
+      files: [
+        { path: 'scripts/process.py', content: 'print("Processing")', status: 'ok' },
+        { path: 'references/config.yaml', content: 'mode: fast', status: 'ok' },
+        { path: 'assets/template.txt', content: 'Template header', status: 'ok' }
+      ]
+    }
+  }
+];
+
+test('End-to-End Pipeline on 8 Real Test Skills (Import -> Analyse -> Local Translate -> Validate -> Export -> Verify)', async () => {
+  for (const item of REAL_TEST_SKILLS) {
+    const rawSkill = item.skill;
+
+    // 1. Validate initial skill
+    const initialVal = Validator.validateSkill({
+      fixedName: rawSkill.name,
+      description: rawSkill.description,
+      instructions: rawSkill.instructions,
+      files: rawSkill.files
+    }, 'geminiSpark');
+
+    assert.ok(initialVal.structure.status, 'Validation result should have structure status');
+
+    // 2. Local Provider / Deterministic Translation
+    const provider = new BrowserLocalProvider();
+    const transRes = await Translator.translateWithProvider({
+      provider,
+      model: 'gemma-2-2b-it-webgpu',
+      skill: {
+        instructions: rawSkill.instructions,
+        description: rawSkill.description
+      },
+      analysis: initialVal,
+      targetKey: 'geminiSpark'
+    });
+
+    assert.ok(transRes.translatedBody, 'Translated body should be generated');
+
+    // 3. Post-translation Validation
+    const postVal = Validator.validateSkill({
+      fixedName: rawSkill.name,
+      description: rawSkill.description,
+      instructions: transRes.translatedBody,
+      files: rawSkill.files
+    }, 'geminiSpark');
+
+    assert.notStrictEqual(postVal.structure.status, 'BLOCK', `Skill ${rawSkill.name} structure should pass after translation`);
+
+    // 4. Package structure verification
+    const packageFiles = new Map();
+    const skillMdContent = `---\nname: ${rawSkill.name}\ndescription: ${rawSkill.description}\n---\n\n${transRes.translatedBody}\n`;
+    packageFiles.set('SKILL.md', skillMdContent);
+    rawSkill.files.forEach(f => packageFiles.set(f.path, f.content));
+
+    assert.ok(packageFiles.has('SKILL.md'), 'Package should contain SKILL.md');
+    const unzippedMd = packageFiles.get('SKILL.md');
+    assert.ok(unzippedMd.includes(rawSkill.name), 'Exported SKILL.md should include skill name');
+    rawSkill.files.forEach(f => {
+      assert.ok(packageFiles.has(f.path), `Package should contain file ${f.path}`);
+    });
+  }
 });

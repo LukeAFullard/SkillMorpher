@@ -6,6 +6,7 @@
 <title>SkillMorpher — translate Agent Skills for Gemini Spark & CLI</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js" integrity="sha512-CSBhVREyzHAjAFfBlIBakjoRUKp5h7VSweP0InR/pAJyptH7peuhCsqAI/snV+TwZmXZqoUklpXp6R6wMnYf5Q==" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.46/lib/index.js" crossorigin="anonymous"></script>
 
 <script src="src/platform-detector.js"></script>
 <script src="src/capabilities.js"></script>
@@ -15,7 +16,7 @@
 <script src="src/script-analyzer.js"></script>
 <script src="src/description-validator.js"></script>
 <script src="src/validator.js"></script>
-<script src="src/providers/ollama-provider.js"></script>
+<script src="src/providers/browser-local-provider.js"></script>
 <script src="src/providers/index.js"></script>
 <script src="src/translator.js"></script>
 
@@ -293,13 +294,13 @@
       </span>
     </div>
     <h1>SkillMorpher</h1>
-    <p>Translate and audit Agent Skills into functionally equivalent Gemini skills with capability analysis and deterministic validation.</p>
-    <p class="fine">Runs entirely in your browser. Nothing here is uploaded to a server — GitHub is queried directly from your device. See <a href="https://support.google.com/gemini/answer/17094296" target="_blank" rel="noopener">Google's Spark skill requirements</a> for reference. Note: Static heuristic analysis cannot guarantee that a skill is safe or fully compatible.</p>
+    <p>Translate and audit Agent Skills into functionally equivalent Gemini skills with browser-local AI inference and deterministic validation.</p>
+    <p class="fine">Runs entirely in your browser. Nothing here is uploaded to a server — no Ollama, Python, or API keys required. See <a href="https://support.google.com/gemini/answer/17094296" target="_blank" rel="noopener">Google's Spark skill requirements</a> for reference.</p>
   </header>
 
   <!-- ============ TARGET SELECTOR & LOCAL MODEL SETTINGS ============ -->
   <div class="card" style="margin-bottom:16px;">
-    <h2>Target Profile & Translation Model</h2>
+    <h2>Target Profile & Translation Engine</h2>
     <div class="row" style="margin-bottom:10px;">
       <select id="targetProfileSelect">
         <option value="geminiSpark" selected>Gemini Spark (100 MB limit, disallows external network calls)</option>
@@ -310,29 +311,24 @@
     <label class="small">Provider</label>
     <div class="row" style="margin-bottom:10px;">
       <select id="providerSelect">
-        <option value="ollama" selected>Ollama (Local AI Models)</option>
+        <option value="browser-local" selected>Browser Local Model (WebGPU / WebLLM)</option>
         <option value="deterministic">Deterministic Engine Only (Offline / Rule-Based)</option>
       </select>
-      <span id="ollamaStatusBadge" class="stamp-tag warn">Checking Ollama...</span>
+      <span id="gpuStatusBadge" class="stamp-tag warn">Checking WebGPU...</span>
     </div>
 
-    <div id="ollamaModelBox">
+    <div id="localModelBox">
       <label class="small">Local Model</label>
       <div class="row" style="margin-bottom:8px;">
-        <select id="ollamaModelSelect">
-          <option value="gemma4:12b">Gemma 4 12B (Default)</option>
-          <option value="gemma4:26b">Gemma 4 26B (Recommended)</option>
-          <option value="gemma4:31b">Gemma 4 31B (Max Quality)</option>
-          <option value="gemma4:e4b">Gemma 4 e4B (Fast / Light)</option>
-          <option value="gemma4:e2b">Gemma 4 e2B (Ultra Light)</option>
-        </select>
-        <button id="testModelBtn" class="ghost">Test Model</button>
+        <select id="localModelSelect"></select>
+        <button id="downloadModelBtn" class="ghost">Check / Download Model</button>
+        <button id="clearCacheBtn" class="ghost">Delete Cached Model</button>
       </div>
-      <div id="modelSpecsInfo" style="font-size:11.5px; color:rgba(22,29,48,0.75);">Context: 256K · Local: ✓ (Private)</div>
+      <div id="modelSpecsInfo" style="font-size:11.5px; color:rgba(22,29,48,0.75);"></div>
       <div id="modelTestStatus" class="status-msg"></div>
     </div>
 
-    <label class="small" for="geminiApiKey" style="margin-top:10px;">Optional Gemini Cloud API Key (fallback if local Ollama unavailable)</label>
+    <label class="small" for="geminiApiKey" style="margin-top:10px;">Optional Gemini Cloud API Key (fallback if local WebGPU model unavailable)</label>
     <input type="password" id="geminiApiKey" placeholder="AIzaSy...">
   </div>
 
@@ -955,78 +951,116 @@
     }
   });
 
-  let ollamaProviderInstance = null;
+  let localProviderInstance = null;
 
-  async function initOllamaStatus() {
-    const badge = el('ollamaStatusBadge');
-    const select = el('ollamaModelSelect');
-    if (typeof OllamaProvider === 'undefined') return;
+  async function initBrowserLocalStatus() {
+    const badge = el('gpuStatusBadge');
+    const select = el('localModelSelect');
+    if (typeof BrowserLocalProvider === 'undefined') return;
 
-    ollamaProviderInstance = new OllamaProvider();
-    const conn = await ollamaProviderInstance.checkConnection();
+    localProviderInstance = new BrowserLocalProvider();
+    const models = BrowserLocalProvider.getModels();
 
-    if (conn.connected) {
+    select.innerHTML = '';
+    models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = `${m.name} (${m.size})`;
+      select.appendChild(opt);
+    });
+
+    const hw = await localProviderInstance.checkHardwareSupport();
+    if (hw.supported) {
       badge.className = 'stamp-tag ok';
-      badge.textContent = 'Ollama Connected';
-      if (conn.models && conn.models.length) {
-        select.innerHTML = '';
-        conn.models.forEach(m => {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = `${m.name} (${m.context})`;
-          select.appendChild(opt);
-        });
-      }
+      badge.textContent = hw.status === 'SUPPORTED' ? '✓ WebGPU Supported' : '⚠ WebGPU Marginal';
     } else {
       badge.className = 'stamp-tag drop';
-      badge.textContent = 'Ollama Not Detected';
-      el('modelTestStatus').textContent = 'Ollama not running at http://localhost:11434. Run Ollama locally to enable local Gemma 4 model translation.';
+      badge.textContent = '✕ WebGPU Unsupported';
+      el('modelTestStatus').textContent = hw.reason + ' (Will fall back to deterministic translation)';
       el('modelTestStatus').className = 'status-msg err';
+    }
+
+    updateModelSpecsDisplay();
+  }
+
+  async function updateModelSpecsDisplay() {
+    const modelId = el('localModelSelect').value;
+    const models = BrowserLocalProvider ? BrowserLocalProvider.getModels() : [];
+    const spec = models.find(m => m.id === modelId);
+    const specsEl = el('modelSpecsInfo');
+    const statusEl = el('modelTestStatus');
+
+    if (spec) {
+      const isCached = localProviderInstance ? await localProviderInstance.checkCache(modelId) : false;
+      specsEl.textContent = `Size: ${spec.size} · Runtime: ${spec.runtime} · Context: ${spec.context} · Status: ${isCached ? '✓ Cached' : 'Not Cached'}`;
     }
   }
 
-  el('testModelBtn').addEventListener('click', async () => {
-    const statusEl = el('modelTestStatus');
-    const model = el('ollamaModelSelect').value;
-    if (!ollamaProviderInstance) return;
+  el('localModelSelect').addEventListener('change', updateModelSpecsDisplay);
 
-    statusEl.textContent = `Testing local model ${model}…`;
+  el('downloadModelBtn').addEventListener('click', async () => {
+    const statusEl = el('modelTestStatus');
+    const modelId = el('localModelSelect').value;
+    if (!localProviderInstance) return;
+
+    statusEl.textContent = `Checking and initializing model ${modelId}…`;
     statusEl.className = 'status-msg';
 
-    const res = await ollamaProviderInstance.testModel(model);
-    if (res.success) {
-      statusEl.textContent = `✓ Model ${model} is operational and ready for structured JSON translation.`;
+    try {
+      await localProviderInstance.loadModel(modelId, (report) => {
+        if (report && report.text) {
+          statusEl.textContent = report.text;
+        }
+      });
+      statusEl.textContent = `✓ Model ${modelId} loaded and cached in browser.`;
       statusEl.className = 'status-msg ok';
-    } else {
-      statusEl.textContent = `✕ Model ${model} test failed: ${res.error}`;
+      await updateModelSpecsDisplay();
+    } catch (err) {
+      statusEl.textContent = `✕ Download / initialization failed: ${err.message}`;
       statusEl.className = 'status-msg err';
     }
   });
 
-  el('providerSelect').addEventListener('change', (e) => {
-    const isOllama = e.target.value === 'ollama';
-    el('ollamaModelBox').style.display = isOllama ? 'block' : 'none';
+  el('clearCacheBtn').addEventListener('click', async () => {
+    const statusEl = el('modelTestStatus');
+    const modelId = el('localModelSelect').value;
+    if (!localProviderInstance) return;
+
+    const cleared = await localProviderInstance.clearCache(modelId);
+    if (cleared) {
+      statusEl.textContent = `Deleted cached model files for ${modelId}.`;
+      statusEl.className = 'status-msg ok';
+    } else {
+      statusEl.textContent = `No cached files found for ${modelId}.`;
+      statusEl.className = 'status-msg';
+    }
+    await updateModelSpecsDisplay();
   });
 
-  initOllamaStatus();
+  el('providerSelect').addEventListener('change', (e) => {
+    const isLocal = e.target.value === 'browser-local';
+    el('localModelBox').style.display = isLocal ? 'block' : 'none';
+  });
+
+  initBrowserLocalStatus();
 
   el('translateBtn').addEventListener('click', async () => {
     if (!state.currentSkill || typeof Translator === 'undefined') return;
 
     const providerType = el('providerSelect').value;
-    const selectedModel = el('ollamaModelSelect').value;
+    const selectedModel = el('localModelSelect').value;
     const apiKey = el('geminiApiKey') ? el('geminiApiKey').value.trim() : '';
     const btn = el('translateBtn');
 
     btn.disabled = true;
-    btn.textContent = providerType === 'ollama' ? `Translating with ${selectedModel}…` : (apiKey ? 'Translating with Gemini AI…' : 'Translating…');
+    btn.textContent = providerType === 'browser-local' ? `Translating locally (${selectedModel})…` : (apiKey ? 'Translating with Gemini AI…' : 'Translating…');
 
     try {
       let transRes;
-      if (providerType === 'ollama' && ollamaProviderInstance) {
+      if (providerType === 'browser-local' && localProviderInstance) {
         const valResult = Validator.validateSkill(state.currentSkill, state.targetProfile);
         transRes = await Translator.translateWithProvider({
-          provider: ollamaProviderInstance,
+          provider: localProviderInstance,
           model: selectedModel,
           skill: state.currentSkill,
           analysis: valResult,
@@ -1045,10 +1079,10 @@
 
       const summaryEl = el('translationSummary');
       let modeStr = 'Deterministic Translation';
-      if (transRes.mode === 'provider') modeStr = `Local Model Translation (${transRes.model})`;
+      if (transRes.mode === 'provider') modeStr = `Local Browser Model (${transRes.model})`;
       else if (transRes.isAI) modeStr = 'Gemini Cloud AI Translation';
 
-      const errStr = transRes.providerError ? ` (Local Ollama error: ${transRes.providerError}, fell back to deterministic)` : '';
+      const errStr = transRes.providerError ? ` (Browser model fallback: ${transRes.providerError}, using deterministic engine)` : '';
       summaryEl.textContent = `${modeStr} completed${errStr}: ${transRes.changesCount} change(s) applied (HIGH: ${transRes.confidenceCounts.HIGH}, MED: ${transRes.confidenceCounts.MEDIUM}, LOW: ${transRes.confidenceCounts.LOW}, MANUAL REVIEW: ${transRes.manualReviewCount}).`;
 
       const diffContainer = el('diffContainer');
