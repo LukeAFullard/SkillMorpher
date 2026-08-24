@@ -43,6 +43,7 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'scanForNetworkCalls',
     'scanForCredentials',
     'scanForPlatformJargon',
+    'extractTopics',
     'sanitizeZipPath',
     'parseSkillMd',
     'renderManifest'
@@ -65,16 +66,16 @@ test('JavaScript syntax is valid in index.html', () => {
   }, 'Inline JavaScript should compile without syntax errors');
 });
 
-test('Credential scanning, platform jargon detection, and path sanitization helper functions', () => {
+test('Credential scanning, platform jargon detection, extractTopics, and path sanitization helper functions', () => {
   const html = fs.readFileSync('index.html', 'utf8');
   const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, '<script> block should exist');
 
   const jsCode = scriptMatch[1];
-  // Extract and evaluate scanForCredentials, scanForPlatformJargon, and sanitizeZipPath with dummy DOM
+  // Extract and evaluate scanForCredentials, scanForPlatformJargon, extractTopics, and sanitizeZipPath with dummy DOM
   const mockScript = jsCode
     .replace(/await /g, '')
-    .replace(/\(function\(\)\{/, '(function(){\n  global.scanForCredentials = scanForCredentials;\n  global.scanForPlatformJargon = scanForPlatformJargon;\n  global.sanitizeZipPath = sanitizeZipPath;\n');
+    .replace(/\(function\(\)\{/, '(function(){\n  global.scanForCredentials = scanForCredentials;\n  global.scanForPlatformJargon = scanForPlatformJargon;\n  global.extractTopics = extractTopics;\n  global.sanitizeZipPath = sanitizeZipPath;\n');
 
   const fnEvaluator = new Function(`
     const dummyEl = { classList: { remove: () => {}, add: () => {} }, style: {}, addEventListener: () => {}, appendChild: () => {} };
@@ -84,9 +85,9 @@ test('Credential scanning, platform jargon detection, and path sanitization help
       createElement: () => dummyEl
     };
     ${mockScript}
-    return { scanForCredentials: global.scanForCredentials, scanForPlatformJargon: global.scanForPlatformJargon, sanitizeZipPath: global.sanitizeZipPath };
+    return { scanForCredentials: global.scanForCredentials, scanForPlatformJargon: global.scanForPlatformJargon, extractTopics: global.extractTopics, sanitizeZipPath: global.sanitizeZipPath };
   `);
-  const { scanForCredentials, scanForPlatformJargon, sanitizeZipPath } = fnEvaluator();
+  const { scanForCredentials, scanForPlatformJargon, extractTopics, sanitizeZipPath } = fnEvaluator();
 
   // Test Anthropic key (literal secret)
   const antResult = scanForCredentials('KEY="sk-ant-api03-12345678901234567890"');
@@ -144,6 +145,12 @@ test('Credential scanning, platform jargon detection, and path sanitization help
 
   const sanitizedNested = sanitizeZipPath('foo/../bar/./baz/../../evil.js');
   assert.strictEqual(sanitizedNested, 'foo/bar/baz/evil.js');
+
+  // Test extractTopics keyword matching
+  assert.deepStrictEqual(extractTopics('excel-data-exporter spreadsheets'), ['spreadsheets', 'data']);
+  assert.deepStrictEqual(extractTopics('pdf-generator-tool'), ['pdf']);
+  assert.deepStrictEqual(extractTopics('web-scraper-pipeline'), ['web', 'automation']);
+  assert.deepStrictEqual(extractTopics('some-random-folder'), []);
 });
 
 test('renderManifest and body credential scanning state/UI behavior', () => {
