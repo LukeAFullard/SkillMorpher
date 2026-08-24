@@ -36,6 +36,35 @@
     }
   ];
 
+  async function withTimeout(promiseFn, ms, label, onTimeoutCleanup) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+      return await promiseFn(ctrl.signal);
+    } catch (e) {
+      if (ctrl.signal.aborted) {
+        if (typeof onTimeoutCleanup === 'function') {
+          try { await onTimeoutCleanup(); } catch (_) {}
+        }
+        throw new Error(`${label} timed out after ${ms}ms`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function generateAndParse(gen, prompt, retriesLeft = 1) {
+    const raw = await gen(prompt);
+    const clean = String(raw).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    try {
+      return JSON.parse(clean);
+    } catch (e) {
+      if (retriesLeft <= 0) throw new Error('Gemma output was not valid JSON: ' + raw);
+      return generateAndParse(gen, prompt + '\n\nYour previous output was not valid JSON. Return ONLY the JSON object, nothing else.', retriesLeft - 1);
+    }
+  }
+
   class BrowserLocalProvider {
     constructor() {
       this.id = 'browser-local';
@@ -270,23 +299,29 @@ Return ONLY valid JSON with the following exact schema:
           const AutoProcessor = transformers.AutoProcessor;
           const Gemma4Model = transformers.Gemma4ForConditionalGeneration || transformers.AutoModelForCausalLM;
 
-          if (AutoProcessor && Gemma4Model && typeof AutoProcessor.from_pretrained === 'function' && typeof Gemma4Model.from_pretrained === 'function') {
-            const processor = await AutoProcessor.from_pretrained(modelMeta.hfRepo, { progress_callback: onProgress });
-            const modelInstance = await Gemma4Model.from_pretrained(modelMeta.hfRepo, {
-              dtype: 'q4f16',
-              device: 'webgpu',
-              progress_callback: onProgress
-            });
-            this.loadedProcessor = processor;
-            this.loadedModel = modelInstance;
-          } else if (typeof transformers.pipeline === 'function') {
-            const pipe = await transformers.pipeline('text-generation', modelMeta.hfRepo, {
-              dtype: 'q4f16',
-              device: 'webgpu',
-              progress_callback: onProgress
-            });
-            this.loadedPipeline = pipe;
-          }
+          await withTimeout(async (signal) => {
+            if (AutoProcessor && Gemma4Model && typeof AutoProcessor.from_pretrained === 'function' && typeof Gemma4Model.from_pretrained === 'function') {
+              const processor = await AutoProcessor.from_pretrained(modelMeta.hfRepo, { progress_callback: onProgress, signal });
+              const modelInstance = await Gemma4Model.from_pretrained(modelMeta.hfRepo, {
+                dtype: 'q4f16',
+                device: 'webgpu',
+                progress_callback: onProgress,
+                signal
+              });
+              this.loadedProcessor = processor;
+              this.loadedModel = modelInstance;
+            } else if (typeof transformers.pipeline === 'function') {
+              const pipe = await transformers.pipeline('text-generation', modelMeta.hfRepo, {
+                dtype: 'q4f16',
+                device: 'webgpu',
+                progress_callback: onProgress,
+                signal
+              });
+              this.loadedPipeline = pipe;
+            }
+          }, 5 * 60 * 1000, 'Model download', async () => {
+            await this.unloadModel();
+          });
 
           this.currentModelId = modelId;
           return this.loadedPipeline || this.loadedModel;
@@ -310,53 +345,49 @@ Return ONLY valid JSON with the following exact schema:
         await this.loadModel(model, progressCallback);
       }
 
-      let rawContent = '';
+      const gen = async (currentPrompt) => {
+        return await withTimeout(async (signal) => {
+          if (this.loadedProcessor && this.loadedModel) {
+            const messages = [
+              { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
+              { role: 'user', content: currentPrompt }
+            ];
 
-      if (this.loadedProcessor && this.loadedModel) {
-        const messages = [
-          { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
-          { role: 'user', content: prompt }
-        ];
+            const textPrompt = (typeof this.loadedProcessor.apply_chat_template === 'function')
+              ? this.loadedProcessor.apply_chat_template(messages, { tokenize: false, add_generation_prompt: true })
+              : currentPrompt;
 
-        const textPrompt = (typeof this.loadedProcessor.apply_chat_template === 'function')
-          ? this.loadedProcessor.apply_chat_template(messages, { tokenize: false, add_generation_prompt: true })
-          : prompt;
+            const inputs = await this.loadedProcessor(textPrompt);
+            const outputs = await this.loadedModel.generate({
+              ...inputs,
+              max_new_tokens: 1024,
+              temperature: 0.1,
+              signal
+            });
+            return await this.loadedProcessor.decode(outputs[0], { skip_special_tokens: true });
+          } else if (this.loadedPipeline) {
+            const messages = [
+              { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
+              { role: 'user', content: currentPrompt }
+            ];
 
-        const inputs = await this.loadedProcessor(textPrompt);
-        const outputs = await this.loadedModel.generate({
-          ...inputs,
-          max_new_tokens: 1024,
-          temperature: 0.1
+            const output = await this.loadedPipeline(messages, {
+              max_new_tokens: 1024,
+              temperature: 0.1,
+              return_full_text: false,
+              signal
+            });
+
+            return Array.isArray(output) ? (output[0]?.generated_text || output[0]?.text || '') : (output?.generated_text || output?.text || '');
+          } else {
+            throw new Error('Transformers.js runtime unavailable in environment');
+          }
+        }, 60 * 1000, 'Generation', async () => {
+          await this.unloadModel();
         });
-        rawContent = await this.loadedProcessor.decode(outputs[0], { skip_special_tokens: true });
-      } else if (this.loadedPipeline) {
-        const messages = [
-          { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
-          { role: 'user', content: prompt }
-        ];
+      };
 
-        const output = await this.loadedPipeline(messages, {
-          max_new_tokens: 1024,
-          temperature: 0.1,
-          return_full_text: false
-        });
-
-        rawContent = Array.isArray(output) ? (output[0]?.generated_text || output[0]?.text || '') : (output?.generated_text || output?.text || '');
-      } else {
-        throw new Error('Transformers.js runtime unavailable in environment');
-      }
-
-      let cleanContent = String(rawContent).trim();
-      if (cleanContent.startsWith('```')) {
-        cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-      }
-
-      let parsed;
-      try {
-        parsed = JSON.parse(cleanContent);
-      } catch (e) {
-        throw new Error('Gemma 4 browser LLM output was not valid JSON: ' + rawContent);
-      }
+      const parsed = await generateAndParse(gen, prompt, 1);
 
       if (!parsed.translated_skill_md) {
         throw new Error('Gemma 4 browser LLM JSON output missing "translated_skill_md" field');
