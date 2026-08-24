@@ -399,18 +399,26 @@
   function sanitizeZipPath(p) {
     return p.split('/').filter(seg => seg && seg !== '.' && seg !== '..').join('/');
   }
+  function lineOf(content, index){
+    return content.slice(0, index).split('\n').length;
+  }
+  function redact(value){
+    return value.length <= 8 ? '*'.repeat(value.length) : value.slice(0,4) + '…' + value.slice(-2);
+  }
   function scanForCredentials(content, includeSoft) {
     const patterns = includeSoft
       ? CREDENTIAL_ENV_PATTERNS.concat(SOFT_CREDENTIAL_HINTS)
       : CREDENTIAL_ENV_PATTERNS;
     const hasKeyReference = patterns.some(p => p.test(content));
-    const secrets = SECRET_VALUE_PATTERNS
-      .filter(({ re }) => {
-        const m = content.match(re);
-        return m && !PLACEHOLDER_HINTS.test(m[0]);
-      })
-      .map(s => s.name);
-    if (PEM_BLOCK_RE.test(content)) secrets.push('private key block');
+    const secrets = [];
+    SECRET_VALUE_PATTERNS.forEach(({ name, re }) => {
+      const m = content.match(re);
+      if (m && !PLACEHOLDER_HINTS.test(m[0])) {
+        secrets.push({ name, line: lineOf(content, m.index), preview: redact(m[0]) });
+      }
+    });
+    const pemMatch = content.match(PEM_BLOCK_RE);
+    if (pemMatch) secrets.push({ name: 'private key block', line: lineOf(content, pemMatch.index), preview: null });
     return { hasKeyReference, secrets };
   }
   function classifyFile(relPath){
@@ -519,7 +527,7 @@
 
       if (cred.secrets.length) {
         status = 'blocked';
-        reason = `looks like a real ${cred.secrets.join('/')} value — excluded from export`;
+        reason = `looks like a real ${cred.secrets.map(s => `${s.name} (line ${s.line})`).join(', ')} — excluded from export`;
       } else if (isEnvFile) {
         status = 'warn';
         reason = '.env file — review for secrets before uploading';
@@ -569,11 +577,12 @@
     state.currentSkill.bodyKeyReference = bodyCred.hasKeyReference;
     state.currentSkill.bodySecrets = bodyCred.secrets;
 
+    const secretList = bodyCred.secrets.map(s => `${s.name} (line ${s.line})`).join(', ');
     const bodyBanner = el('bodyCredBanner');
     if (bodyCred.secrets.length) {
       bodyBanner.style.display = 'block';
       bodyBanner.className = 'cred-banner cred-banner-blocked';
-      bodyBanner.textContent = `Instructions contain what looks like a real ${bodyCred.secrets.join('/')} value — download is blocked until it's removed, or check "include flagged secrets anyway."`;
+      bodyBanner.textContent = `Instructions contain what looks like a real ${secretList} — download is blocked until it's removed, or check "include flagged secrets anyway."`;
     } else if (bodyCred.hasKeyReference) {
       bodyBanner.style.display = 'block';
       bodyBanner.className = 'cred-banner';
@@ -583,6 +592,7 @@
     }
 
     el('downloadStatus').style.display = 'none';
+    el('includeBlockedCheckbox').checked = false;
 
     const list = el('fileManifest');
     list.innerHTML = '';
@@ -597,7 +607,7 @@
 
     const skillMdStatus = bodyCred.secrets.length ? 'blocked' : (bodyCred.hasKeyReference ? 'warn' : 'ok');
     const skillMdReason = bodyCred.secrets.length
-      ? `looks like a real ${bodyCred.secrets.join('/')} value in the instructions`
+      ? `looks like a real ${secretList} in the instructions`
       : (bodyCred.hasKeyReference ? 'instructions reference a third-party API key' : null);
     addRow('SKILL.md', skillMdStatus, skillMdReason);
     files.forEach(f => addRow(f.path, f.status, f.reason));
@@ -770,7 +780,7 @@
 
           if (cred.secrets.length) {
             status = 'blocked';
-            reason = `looks like a real ${cred.secrets.join('/')} value — excluded from export`;
+            reason = `looks like a real ${cred.secrets.map(s => `${s.name} (line ${s.line})`).join(', ')} — excluded from export`;
           } else if (isEnvFile) {
             status = 'warn';
             reason = '.env file — review for secrets before uploading';
@@ -816,6 +826,7 @@
     state.currentSkill = null;
     el('manifestCard').style.display = 'none';
     el('downloadStatus').style.display = 'none';
+    el('includeBlockedCheckbox').checked = false;
     document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
   });
 

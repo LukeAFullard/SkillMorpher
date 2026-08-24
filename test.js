@@ -86,15 +86,15 @@ test('Credential scanning and path sanitization helper functions', () => {
 
   // Test Anthropic key (literal secret)
   const antResult = scanForCredentials('KEY="sk-ant-api03-12345678901234567890"');
-  assert.deepStrictEqual(antResult.secrets, ['Anthropic key']);
+  assert.deepStrictEqual(antResult.secrets, [{ name: 'Anthropic key', line: 1, preview: 'sk-a…90' }]);
 
   // Test PEM private key block
   const pemResult = scanForCredentials('-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----');
-  assert.deepStrictEqual(pemResult.secrets, ['private key block']);
+  assert.deepStrictEqual(pemResult.secrets, [{ name: 'private key block', line: 1, preview: null }]);
 
   // Test fake sk-... value (literal secret)
   const secretResult = scanForCredentials('KEY="sk-123456789012345678901234"');
-  assert.deepStrictEqual(secretResult.secrets, ['OpenAI key']);
+  assert.deepStrictEqual(secretResult.secrets, [{ name: 'OpenAI key', line: 1, preview: 'sk-1…34' }]);
 
   // Test placeholder string is NOT flagged as literal secret
   const placeholderResult = scanForCredentials('KEY="YOUR_API_KEY_HERE"');
@@ -211,11 +211,16 @@ test('renderManifest and body credential scanning state/UI behavior', () => {
 
   // Test 3: Body with literal secret (Anthropic key)
   renderManifest('test source', { name: 'my-skill', description: 'Desc' }, 'Here is my key sk-ant-api03-12345678901234567890', []);
-  assert.deepStrictEqual(state.currentSkill.bodySecrets, ['Anthropic key']);
+  assert.deepStrictEqual(state.currentSkill.bodySecrets, [{ name: 'Anthropic key', line: 1, preview: 'sk-a…90' }]);
   assert.strictEqual(mockDoc.getElementById('bodyCredBanner').style.display, 'block');
   assert.strictEqual(mockDoc.getElementById('bodyCredBanner').className, 'cred-banner cred-banner-blocked');
-  assert.ok(mockDoc.getElementById('bodyCredBanner').textContent.includes('real Anthropic key value'));
+  assert.ok(mockDoc.getElementById('bodyCredBanner').textContent.includes('real Anthropic key (line 1)'));
 
   const fileListBlocked = mockDoc.getElementById('fileManifest');
   assert.ok(fileListBlocked.children[0].innerHTML.includes('stamp-tag blocked'));
+
+  // Test 4: Reset checkbox on renderManifest
+  mockDoc.getElementById('includeBlockedCheckbox').checked = true;
+  renderManifest('test source 2', { name: 'my-skill-2', description: 'Desc 2' }, 'Clean instructions', []);
+  assert.strictEqual(mockDoc.getElementById('includeBlockedCheckbox').checked, false, 'includeBlockedCheckbox should reset to false on renderManifest');
 });
