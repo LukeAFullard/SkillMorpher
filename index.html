@@ -99,6 +99,23 @@
   }
   header.top a{ color:var(--paper); }
 
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(22,29,48,0.75);
+    display:none; align-items:center; justify-content:center;
+    z-index:1000; padding:20px; backdrop-filter:blur(3px);
+  }
+  .modal-box{
+    background:var(--paper); color:var(--ink); border-radius:4px;
+    max-width:580px; width:100%; padding:24px; position:relative;
+    box-shadow:0 8px 32px rgba(0,0,0,0.4); border:1px solid var(--line);
+  }
+  .modal-box h3{
+    font-family:var(--type); font-size:16px; letter-spacing:.05em; margin:0 0 10px;
+  }
+  .modal-box ol{ margin:10px 0 16px; padding-left:20px; font-size:13px; }
+  .modal-box li{ margin-bottom:8px; }
+  .modal-box code{ font-family:var(--mono); background:var(--paper-2); padding:2px 5px; border-radius:2px; font-size:12px; }
+
   .card{
     background:var(--paper);
     color:var(--ink);
@@ -450,6 +467,28 @@
       <button class="ghost" id="clearBtn">Clear</button>
     </div>
     <div id="downloadStatus" class="status-msg err" style="display:none;"></div>
+  </div>
+
+  <!-- WebGPU Enablement Help Modal -->
+  <div id="webgpuModal" class="modal-overlay">
+    <div class="modal-box">
+      <h3>WebGPU Hardware Acceleration Required</h3>
+      <p style="font-size:13.5px; margin-bottom:12px;">
+        WebGPU is currently disabled, unsupported, or restricted in your browser environment. To run Gemma 4 models locally in your browser, follow these steps to enable WebGPU:
+      </p>
+      <ol>
+        <li><strong>Google Chrome & Microsoft Edge:</strong> Navigate to <code>chrome://flags/#enable-unsafe-webgpu</code> or <code>edge://flags/#enable-unsafe-webgpu</code> in your address bar, set it to <strong>Enabled</strong>, and restart your browser. Ensure hardware acceleration is turned on under Settings &gt; System.</li>
+        <li><strong>Firefox:</strong> Open <code>about:config</code>, search for <code>dom.webgpu.enabled</code>, set it to <strong>true</strong>, and restart Firefox.</li>
+        <li><strong>Safari (macOS / iOS):</strong> Open Safari Settings &gt; Advanced &gt; Show Features for Web Developers. Under Feature Flags, check <strong>WebGPU</strong>.</li>
+        <li><strong>Linux Users:</strong> Run Chrome with <code>--enable-features=Vulkan,UseSkiaRenderer</code> or <code>--enable-unsafe-webgpu</code> flag enabled.</li>
+      </ol>
+      <p style="font-size:12px; color:rgba(22,29,48,0.7); margin-bottom:16px;">
+        Note: You can also enter a Gemini Cloud API key or use the Deterministic Translation option if WebGPU cannot be enabled on your hardware.
+      </p>
+      <div style="text-align:right;">
+        <button id="closeWebgpuModalBtn" class="primary">Got it, close</button>
+      </div>
+    </div>
   </div>
 
   <footer>
@@ -986,12 +1025,20 @@
     if (hw.supported) {
       badge.className = 'stamp-tag ok';
       badge.textContent = hw.status === 'SUPPORTED' ? '✓ WebGPU Supported' : '⚠ WebGPU Marginal';
+      badge.style.cursor = 'pointer';
+      badge.title = 'Click for WebGPU setup details';
     } else {
       badge.className = 'stamp-tag drop';
-      badge.textContent = '✕ WebGPU Unsupported';
+      badge.textContent = '✕ WebGPU Unsupported (Click for help)';
+      badge.style.cursor = 'pointer';
+      badge.title = 'Click for instructions on how to enable WebGPU';
       el('modelTestStatus').textContent = hw.reason + ' (Will fall back to deterministic translation)';
       el('modelTestStatus').className = 'status-msg err';
     }
+
+    badge.onclick = () => {
+      el('webgpuModal').style.display = 'flex';
+    };
 
     updateModelSpecsDisplay(hw);
   }
@@ -1033,6 +1080,11 @@
 
     statusEl.textContent = `Initializing and loading ${modelId}…`;
     statusEl.className = 'status-msg';
+
+    const hw = await localProviderInstance.checkHardwareSupport();
+    if (!hw.supported) {
+      el('webgpuModal').style.display = 'flex';
+    }
 
     try {
       await localProviderInstance.loadModel(modelId, (report) => {
@@ -1495,6 +1547,15 @@
   el('copyName').addEventListener('click', () => copyToClipboard(state.currentSkill.fixedName, el('copyName')));
   el('copyDesc').addEventListener('click', () => copyToClipboard(state.currentSkill.description, el('copyDesc')));
   el('copyInstr').addEventListener('click', () => copyToClipboard(state.currentSkill.instructions, el('copyInstr')));
+
+  el('closeWebgpuModalBtn').addEventListener('click', () => {
+    el('webgpuModal').style.display = 'none';
+  });
+  el('webgpuModal').addEventListener('click', (e) => {
+    if (e.target === el('webgpuModal')) {
+      el('webgpuModal').style.display = 'none';
+    }
+  });
 
   el('clearBtn').addEventListener('click', () => {
     state.currentSkill = null;

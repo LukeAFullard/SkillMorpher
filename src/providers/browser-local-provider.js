@@ -12,7 +12,7 @@
   const MODELS = [
     {
       id: 'gemma-4-e2b-it-webgpu',
-      hfRepo: 'onnx-community/gemma-4-e2b-it-ONNX',
+      hfRepo: 'onnx-community/gemma-4-E2B-it-ONNX',
       name: 'Gemma 4 E2B IT (Edge / Fast)',
       runtime: 'Transformers.js / ONNX WebGPU',
       size: '1.1 GB',
@@ -24,7 +24,7 @@
     },
     {
       id: 'gemma-4-e4b-it-webgpu',
-      hfRepo: 'onnx-community/gemma-4-e4b-it-ONNX',
+      hfRepo: 'onnx-community/gemma-4-E4B-it-ONNX',
       name: 'Gemma 4 E4B IT (Edge / Higher Quality)',
       runtime: 'Transformers.js / ONNX WebGPU',
       size: '2.2 GB',
