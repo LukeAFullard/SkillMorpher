@@ -11,41 +11,66 @@
 
   const MODELS = [
     {
-      id: 'gemma-2-2b-it-webgpu',
-      name: 'Gemma 2 2B IT (WebGPU)',
+      id: 'gemma-4-e2b-it-webgpu',
+      name: 'Gemma 4 E2B IT (Edge / Fast)',
       runtime: 'WebLLM',
-      size: '1.45 GB',
-      sizeBytes: 1.45 * 1024 * 1024 * 1024,
-      context: '8K',
-      recommended: true,
-      requirements: { webgpu: true, minVramMB: 2048 }
-    },
-    {
-      id: 'gemma-2b-it-q4f16_1-webgpu',
-      name: 'Gemma 2B IT Q4 (WebGPU)',
-      runtime: 'WebLLM',
-      size: '1.35 GB',
-      sizeBytes: 1.35 * 1024 * 1024 * 1024,
-      context: '8K',
+      size: '1.1 GB',
+      sizeBytes: 1.1 * 1024 * 1024 * 1024,
+      context: '128K',
       recommended: false,
-      requirements: { webgpu: true, minVramMB: 2048 }
-    },
-    {
-      id: 'qwen2.5-1.5b-instruct-webgpu',
-      name: 'Qwen 2.5 1.5B Instruct (WebGPU)',
-      runtime: 'WebLLM',
-      size: '1.10 GB',
-      sizeBytes: 1.10 * 1024 * 1024 * 1024,
-      context: '8K',
-      recommended: false,
+      tier: 'light',
       requirements: { webgpu: true, minVramMB: 1536 }
+    },
+    {
+      id: 'gemma-4-e4b-it-webgpu',
+      name: 'Gemma 4 E4B IT (Edge / Balanced)',
+      runtime: 'WebLLM',
+      size: '2.2 GB',
+      sizeBytes: 2.2 * 1024 * 1024 * 1024,
+      context: '128K',
+      recommended: false,
+      tier: 'standard-light',
+      requirements: { webgpu: true, minVramMB: 3072 }
+    },
+    {
+      id: 'gemma-4-12b-it-webgpu',
+      name: 'Gemma 4 12B IT (Default Target)',
+      runtime: 'WebLLM',
+      size: '6.8 GB',
+      sizeBytes: 6.8 * 1024 * 1024 * 1024,
+      context: '256K',
+      recommended: true,
+      tier: 'default',
+      requirements: { webgpu: true, minVramMB: 8192 }
+    },
+    {
+      id: 'gemma-4-26b-a4b-it-webgpu',
+      name: 'Gemma 4 26B A4B IT (MoE High Quality)',
+      runtime: 'WebLLM',
+      size: '12.5 GB',
+      sizeBytes: 12.5 * 1024 * 1024 * 1024,
+      context: '256K',
+      recommended: false,
+      tier: 'pro',
+      requirements: { webgpu: true, minVramMB: 12288 }
+    },
+    {
+      id: 'gemma-4-31b-it-webgpu',
+      name: 'Gemma 4 31B IT (Max Quality)',
+      runtime: 'WebLLM',
+      size: '18.0 GB',
+      sizeBytes: 18.0 * 1024 * 1024 * 1024,
+      context: '256K',
+      recommended: false,
+      tier: 'ultra',
+      requirements: { webgpu: true, minVramMB: 20480 }
     }
   ];
 
   class BrowserLocalProvider {
     constructor() {
       this.id = 'browser-local';
-      this.name = 'Browser Local Model (WebGPU)';
+      this.name = 'Browser Local Model (Gemma 4 WebGPU)';
       this.loadedEngine = null;
       this.currentModelId = null;
     }
@@ -134,7 +159,7 @@
         description: skill.description || ''
       };
 
-      return `You are a specialized Agent Skill Translator running locally in the browser.
+      return `You are a Gemma 4 Agent Skill Translator running locally in the browser via WebGPU.
 Translate the provided Agent Skill instructions to be functionally equivalent for ${target}.
 
 Deterministic Context Payload:
@@ -185,7 +210,7 @@ Requirements:
       return null;
     }
 
-    async translate({ skill, analysis, target = 'gemini-spark', model = 'gemma-2-2b-it-webgpu', progressCallback }) {
+    async translate({ skill, analysis, target = 'gemini-spark', model = 'gemma-4-12b-it-webgpu', progressCallback }) {
       const prompt = this.buildStructuredPrompt({ skill, analysis, target });
 
       if (typeof window !== 'undefined' && window.webllm && !this.loadedEngine) {
@@ -194,7 +219,7 @@ Requirements:
 
       if (this.loadedEngine) {
         const messages = [
-          { role: 'system', content: 'You are an agent skill translator outputting strictly valid JSON.' },
+          { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
           { role: 'user', content: prompt }
         ];
 
@@ -208,11 +233,11 @@ Requirements:
         try {
           parsed = JSON.parse(content);
         } catch (e) {
-          throw new Error('Browser LLM output was not valid JSON: ' + content);
+          throw new Error('Gemma 4 browser LLM output was not valid JSON: ' + content);
         }
 
         if (!parsed.translated_skill_md) {
-          throw new Error('Browser LLM JSON output missing "translated_skill_md" field');
+          throw new Error('Gemma 4 browser LLM JSON output missing "translated_skill_md" field');
         }
 
         return {
