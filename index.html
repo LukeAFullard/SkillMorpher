@@ -284,7 +284,7 @@
     <div id="repoFilterRow" class="row" style="display:none; margin-top:14px;">
       <input type="text" id="filterBox" placeholder="Filter by name or category…">
       <select id="categorySelect"><option value="">All categories</option></select>
-      <button id="auditAllBtn" class="ghost">Audit all for secrets</button>
+      <button id="auditAllBtn" class="ghost">Audit all (SKILL.md text only)</button>
     </div>
     <div id="auditStatus" class="status-msg"></div>
 
@@ -538,7 +538,7 @@
 
       if (cred.secrets.length) {
         status = 'blocked';
-        reason = `looks like a real ${cred.secrets.map(s => `${s.name} (line ${s.line})`).join(', ')} — excluded from export`;
+        reason = `looks like a real ${cred.secrets.map(s => `${s.name}${s.preview ? ' ' + s.preview : ''} (line ${s.line})`).join(', ')} — excluded from export`;
       } else if (isEnvFile) {
         status = 'warn';
         reason = '.env file — review for secrets before uploading';
@@ -588,7 +588,7 @@
     state.currentSkill.bodyKeyReference = bodyCred.hasKeyReference;
     state.currentSkill.bodySecrets = bodyCred.secrets;
 
-    const secretList = bodyCred.secrets.map(s => `${s.name} (line ${s.line})`).join(', ');
+    const secretList = bodyCred.secrets.map(s => `${s.name}${s.preview ? ' ' + s.preview : ''} (line ${s.line})`).join(', ');
     const bodyBanner = el('bodyCredBanner');
     if (bodyCred.secrets.length) {
       bodyBanner.style.display = 'block';
@@ -666,6 +666,7 @@
     setRepoStatus('Loading ' + owner + '/' + repo + '… ', false);
     el('results').style.display = 'none';
     el('repoFilterRow').style.display = 'none';
+    el('auditStatus').textContent = '';
     try{
       const { branch, tree, truncated } = await loadRepo(owner, repo);
       state.owner = owner; state.repo = repo; state.branch = branch; state.tree = tree;
@@ -754,7 +755,7 @@
         }
       } catch(e){ /* leave unaudited on fetch/parse failure */ }
     }
-    statusEl.textContent = `Audited ${items.length} skill${items.length === 1 ? '' : 's'}.`;
+    statusEl.textContent = `Audited ${items.length} skill${items.length === 1 ? '' : 's'} (SKILL.md text only — sibling files not checked).`;
     btn.disabled = false;
     if (state.redrawResults) state.redrawResults();
   });
@@ -835,7 +836,7 @@
 
           if (cred.secrets.length) {
             status = 'blocked';
-            reason = `looks like a real ${cred.secrets.map(s => `${s.name} (line ${s.line})`).join(', ')} — excluded from export`;
+            reason = `looks like a real ${cred.secrets.map(s => `${s.name}${s.preview ? ' ' + s.preview : ''} (line ${s.line})`).join(', ')} — excluded from export`;
           } else if (isEnvFile) {
             status = 'warn';
             reason = '.env file — review for secrets before uploading';

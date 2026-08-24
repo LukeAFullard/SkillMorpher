@@ -237,7 +237,7 @@ test('renderManifest and body credential scanning state/UI behavior', () => {
   assert.deepStrictEqual(state.currentSkill.bodySecrets, [{ name: 'Anthropic key', line: 1, preview: 'sk-a…90' }]);
   assert.strictEqual(mockDoc.getElementById('bodyCredBanner').style.display, 'block');
   assert.strictEqual(mockDoc.getElementById('bodyCredBanner').className, 'cred-banner cred-banner-blocked');
-  assert.ok(mockDoc.getElementById('bodyCredBanner').textContent.includes('real Anthropic key (line 1)'));
+  assert.ok(mockDoc.getElementById('bodyCredBanner').textContent.includes('real Anthropic key sk-a…90 (line 1)'));
 
   const fileListBlocked = mockDoc.getElementById('fileManifest');
   assert.ok(fileListBlocked.children[0].innerHTML.includes('stamp-tag blocked'));
@@ -246,4 +246,30 @@ test('renderManifest and body credential scanning state/UI behavior', () => {
   mockDoc.getElementById('includeBlockedCheckbox').checked = true;
   renderManifest('test source 2', { name: 'my-skill-2', description: 'Desc 2' }, 'Clean instructions', []);
   assert.strictEqual(mockDoc.getElementById('includeBlockedCheckbox').checked, false, 'includeBlockedCheckbox should reset to false on renderManifest');
+});
+
+test('Audit button label, summary text, and audit status clearing on repo load', () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+
+  // Check markup for updated button text
+  assert.ok(
+    html.includes('<button id="auditAllBtn" class="ghost">Audit all (SKILL.md text only)</button>'),
+    'Audit button should specify (SKILL.md text only)'
+  );
+
+  // Check audit summary text in script
+  assert.ok(
+    html.includes(' (SKILL.md text only — sibling files not checked).'),
+    'Audit summary text should clarify scope'
+  );
+
+  // Check handleLoadRepo clears auditStatus
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, '<script> block should exist');
+  const jsCode = scriptMatch[1];
+
+  assert.ok(
+    /async function handleLoadRepo[\s\S]*?el\('auditStatus'\)\.textContent = '';/.test(jsCode),
+    'handleLoadRepo should clear auditStatus'
+  );
 });
