@@ -40,6 +40,7 @@
       this.name = 'Browser Local Model (Gemma 4 WebGPU)';
       this.loadedEngine = null;
       this.currentModelId = null;
+      this.isModelLoading = false;
     }
 
     static getModels() {
@@ -88,11 +89,15 @@
         }
 
         const isLowPower = adapter.isFallbackAdapter || false;
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+        const recommendedModel = (isLowPower || isMobile) ? 'gemma-4-e2b-it-webgpu' : 'gemma-4-e4b-it-webgpu';
+
         return {
           supported: true,
           status: isLowPower ? 'MARGINAL' : 'SUPPORTED',
           adapterInfo: adapter.info || null,
-          reason: isLowPower ? 'WebGPU running on software/fallback adapter.' : 'WebGPU hardware acceleration available.'
+          recommendedModel,
+          reason: isLowPower ? 'WebGPU running on software/fallback adapter. Gemma 4 E2B recommended.' : (isMobile ? 'Mobile device detected. Gemma 4 E2B recommended for battery & VRAM efficiency.' : 'WebGPU hardware acceleration available. Gemma 4 E4B recommended.')
         };
       } catch (err) {
         return {
@@ -191,26 +196,35 @@ Return ONLY valid JSON with the following exact schema:
     }
 
     async loadModel(modelId, progressCallback) {
+      if (this.isModelLoading) {
+        throw new Error('Another model is currently downloading or initializing. Please wait.');
+      }
+
       const hw = await this.checkHardwareSupport();
       if (!hw.supported) {
         throw new Error(hw.reason);
       }
 
-      const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
-      if (globalObj && globalObj.webllm) {
-        const engine = await globalObj.webllm.CreateMLCEngine(modelId, {
-          initProgressCallback: (report) => {
-            if (progressCallback) progressCallback(report);
-          }
-        });
-        this.loadedEngine = engine;
-        this.currentModelId = modelId;
-        return engine;
-      }
+      this.isModelLoading = true;
+      try {
+        const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
+        if (globalObj && globalObj.webllm) {
+          const engine = await globalObj.webllm.CreateMLCEngine(modelId, {
+            initProgressCallback: (report) => {
+              if (progressCallback) progressCallback(report);
+            }
+          });
+          this.loadedEngine = engine;
+          this.currentModelId = modelId;
+          return engine;
+        }
 
-      // Mock engine fallback when webllm global is not present in test/light mode
-      this.currentModelId = modelId;
-      return null;
+        // Mock engine fallback when webllm global is not present in test/light mode
+        this.currentModelId = modelId;
+        return null;
+      } finally {
+        this.isModelLoading = false;
+      }
     }
 
     async translate({ skill, analysis, target = 'gemini-spark', model = 'gemma-4-e4b-it-webgpu', progressCallback }) {
@@ -232,12 +246,18 @@ Return ONLY valid JSON with the following exact schema:
           response_format: { type: 'json_object' }
         });
 
-        const content = response.choices[0]?.message?.content || '';
+        const rawContent = response.choices[0]?.message?.content || '';
+        // Sanitize markdown fences or extra whitespace around JSON output
+        let cleanContent = rawContent.trim();
+        if (cleanContent.startsWith('```')) {
+          cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+        }
+
         let parsed;
         try {
-          parsed = JSON.parse(content);
+          parsed = JSON.parse(cleanContent);
         } catch (e) {
-          throw new Error('Gemma 4 browser LLM output was not valid JSON: ' + content);
+          throw new Error('Gemma 4 browser LLM output was not valid JSON: ' + rawContent);
         }
 
         if (!parsed.translated_skill_md) {

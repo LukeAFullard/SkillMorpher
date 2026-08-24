@@ -305,8 +305,8 @@
       id: 29,
       category: 'Tool-heavy',
       name: 'mixed-platform-jargon-skill',
-      description: 'Skill combining Claude Bash tool and OpenAI Code Interpreter.',
-      instructions: 'Use the Bash tool to list files in /mnt/data and call code_interpreter.',
+      description: 'Skill combining Claude Bash tool, OpenAI Code Interpreter, and MCP server connectivity.',
+      instructions: 'Use the Bash tool to list files in /mnt/data, call code_interpreter, and use MCP server for external resources.',
       files: [],
       expectedPlatform: 'Anthropic',
       expectedNeedsTranslation: true

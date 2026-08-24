@@ -90,6 +90,15 @@
       targetCapability: 'computerUse',
       confidence: 'NONE',
       manualReviewRequired: true
+    },
+    {
+      platform: 'Generic',
+      sourceTerm: 'MCP server / tool',
+      pattern: /\b(use|call)\s+(the\s+)?mcp\s+(server|tool|protocol)\b/i,
+      replacement: `## Manual review required\nThis workflow requires Model Context Protocol (MCP) server connectivity. Gemini Spark does not support external MCP server connections.`,
+      targetCapability: 'mcpConnectivity',
+      confidence: 'NONE',
+      manualReviewRequired: true
     }
   ];
 
