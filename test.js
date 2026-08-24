@@ -817,6 +817,131 @@ test('End-to-End Pipeline on 8 Real Test Skills (Import -> Analyse -> Local Tran
   }
 });
 
+test('Regression: fetchSkillFiles marks 404/failed fetch as blocked', async () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, '<script> block should exist');
+
+  const jsCode = scriptMatch[1];
+  const mockScript = jsCode.replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.fetchSkillFiles = fetchSkillFiles;\n  refreshRateLimit();\n})();');
+
+  const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  const fnEvaluator = new AsyncFunction('document', 'fetch', 'jsyaml', `
+    ${mockScript}
+    return { fetchSkillFiles: globalThis.fetchSkillFiles };
+  `);
+
+  const createMockEl = () => ({
+    classList: { remove: () => {}, add: () => {} },
+    style: {},
+    addEventListener: () => {},
+    appendChild: () => {},
+    scrollIntoView: () => {}
+  });
+  const mockDoc = { getElementById: () => createMockEl(), querySelectorAll: () => [], createElement: () => createMockEl() };
+
+  const mockFetch = async (url) => {
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '404 Not Found'
+    };
+  };
+
+  const { fetchSkillFiles } = await fnEvaluator(mockDoc, mockFetch, {});
+  const tree = [
+    { type: 'blob', path: 'my-skill/SKILL.md' },
+    { type: 'blob', path: 'my-skill/helper.py' }
+  ];
+
+  const files = await fetchSkillFiles('owner', 'repo', 'main', tree, 'my-skill/SKILL.md');
+  assert.strictEqual(files.length, 1);
+  assert.strictEqual(files[0].path, 'helper.py');
+  assert.strictEqual(files[0].status, 'blocked');
+  assert.ok(files[0].reason.includes('fetch failed (404)'), `Expected reason to include fetch failed (404), got: ${files[0].reason}`);
+  assert.strictEqual(files[0].content, null);
+});
+
+test('Regression: translateSkillAI uses gemini-2.5-flash and x-goog-api-key header', async () => {
+  const skill = { instructions: 'Test instructions', description: 'Test desc' };
+  let capturedUrl = '';
+  let capturedHeaders = {};
+
+  const originalFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    capturedUrl = url;
+    capturedHeaders = opts.headers || {};
+    return {
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: 'Translated instructions' }] } }]
+      })
+    };
+  };
+
+  try {
+    const res = await Translator.translateSkillAI(skill, 'test-api-key', 'geminiSpark');
+    assert.strictEqual(res.isAI, true);
+    assert.ok(capturedUrl.includes('gemini-2.5-flash'), `URL should contain gemini-2.5-flash (was ${capturedUrl})`);
+    assert.strictEqual(capturedUrl.includes('key='), false, 'URL should not contain API key in query string');
+    assert.strictEqual(capturedHeaders['x-goog-api-key'], 'test-api-key', 'Header x-goog-api-key should match passed API key');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('Regression: renderManifest preserves unknown frontmatter fields on export', () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch);
+  const jsCode = scriptMatch[1];
+
+  const mockScript = jsCode
+    .replace(/await /g, '')
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.renderManifest = renderManifest;\n  globalThis.calculatePackageSize = calculatePackageSize;\n  globalThis.state = state;\n  refreshRateLimit();\n})();');
+
+  const evalContext = new Function('document', 'window', 'globalThis', 'jsyaml', `
+    ${mockScript}
+    return { renderManifest: globalThis.renderManifest, calculatePackageSize: globalThis.calculatePackageSize, state: globalThis.state };
+  `);
+
+  const createMockEl = () => ({
+    classList: { remove: () => {}, add: () => {} },
+    style: {},
+    addEventListener: () => {},
+    appendChild: () => {},
+    scrollIntoView: () => {}
+  });
+  const mockDoc = { getElementById: () => createMockEl(), querySelectorAll: () => [], createElement: () => createMockEl() };
+
+  const mockJsyaml = {
+    dump: (obj) => JSON.stringify(obj)
+  };
+
+  const { renderManifest, state } = evalContext(mockDoc, {}, globalThis, mockJsyaml);
+
+  const rawFrontmatter = {
+    name: 'custom-skill',
+    description: 'Custom desc',
+    author: 'Jane Doe',
+    version: '1.2.3',
+    license: 'MIT'
+  };
+
+  renderManifest('test source', rawFrontmatter, 'Instructions', []);
+
+  assert.ok(state.currentSkill.rawFrontmatter);
+  assert.strictEqual(state.currentSkill.rawFrontmatter.author, 'Jane Doe');
+  assert.strictEqual(state.currentSkill.rawFrontmatter.version, '1.2.3');
+
+  // Verify export frontmatter object in download logic pattern
+  const exportedFm = { ...(state.currentSkill.rawFrontmatter || {}), name: state.currentSkill.fixedName, description: state.currentSkill.description };
+  assert.strictEqual(exportedFm.author, 'Jane Doe');
+  assert.strictEqual(exportedFm.version, '1.2.3');
+  assert.strictEqual(exportedFm.license, 'MIT');
+  assert.strictEqual(exportedFm.name, 'custom-skill');
+});
+
 test('Benchmark Corpus of 50 Representative Skills and Benchmark Runner Suite', () => {
   assert.ok(BenchmarkCorpus, 'BenchmarkCorpus module should exist');
   assert.strictEqual(BenchmarkCorpus.BENCHMARK_SKILLS.length, 50, 'Benchmark corpus must contain 50 representative skills');

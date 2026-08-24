@@ -733,6 +733,10 @@
       const fileClass = classifyFile(cleanPath);
       if (!fileClass.allowed){ files.push({ path: cleanPath, content:null, status:'dropped', reason: fileClass.reason }); continue; }
       const res = await fetch(rawBase + blob.path);
+      if (!res.ok) {
+        files.push({ path: cleanPath, content: null, status: 'blocked', reason: `fetch failed (${res.status}) — not included` });
+        continue;
+      }
       const text = await res.text();
       const netWarn = scanForNetworkCalls(text);
       const cred = scanForCredentials(text);
@@ -767,8 +771,9 @@
     if (!skill) return 0;
     const name = skill.fixedName || 'unnamed-skill';
     const desc = skill.description || '';
+    const fmObj = { ...(skill.rawFrontmatter || {}), name, description: desc };
     const fmYaml = (typeof jsyaml !== 'undefined' && jsyaml.dump)
-      ? jsyaml.dump({ name, description: desc }).trim()
+      ? jsyaml.dump(fmObj).trim()
       : `name: ${name}\ndescription: ${desc}`;
     const skillMdContent = '---\n' + fmYaml + '\n---\n\n' + (skill.instructions || '') + '\n';
     let total = new TextEncoder().encode(skillMdContent).length;
@@ -828,7 +833,7 @@
     const fixedName = toKebabCase(name);
     const nameNeedsFix = fixedName && fixedName !== name;
 
-    state.currentSkill = { sourceLabel, name, fixedName, description: desc, instructions: body, files };
+    state.currentSkill = { sourceLabel, name, fixedName, description: desc, instructions: body, files, rawFrontmatter: frontmatter };
 
     // Run deterministic pipeline validator
     const valResult = (typeof Validator !== 'undefined')
@@ -1535,7 +1540,7 @@
     el('downloadStatus').style.display = 'none';
 
     const zip = new JSZip();
-    const fmObj = { name: skill.fixedName, description: skill.description };
+    const fmObj = { ...(skill.rawFrontmatter || {}), name: skill.fixedName, description: skill.description };
     const fmYaml = jsyaml.dump(fmObj).trim();
     const skillMdContent = '---\n' + fmYaml + '\n---\n\n' + skill.instructions + '\n';
     zip.file('SKILL.md', skillMdContent);
