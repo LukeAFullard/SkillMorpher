@@ -208,7 +208,7 @@ test('Translator AI prompt generation and unconfigured/offline fallback handling
   assert.ok(fallbackRes.translatedBody.includes('Inspect the repository files available to you'));
 });
 
-test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting and hardware checking', async () => {
+test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware checking, and simultaneous load guard', async () => {
   const provider = new BrowserLocalProvider();
   const models = BrowserLocalProvider.getModels();
 
@@ -233,6 +233,14 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting and hardware 
   const hw = await provider.checkHardwareSupport();
   assert.strictEqual(hw.supported, false); // Node environment has no navigator.gpu
   assert.strictEqual(hw.status, 'UNSUPPORTED');
+
+  // Test simultaneous load guard flag
+  provider.isModelLoading = true;
+  await assert.rejects(
+    async () => { await provider.loadModel('gemma-4-e4b-it-webgpu'); },
+    /Another model is currently downloading/
+  );
+  provider.isModelLoading = false;
 });
 
 test('Translator translateWithProvider routing and fallback behavior for Gemma 4', async () => {
