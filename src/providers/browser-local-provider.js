@@ -301,12 +301,12 @@ Return ONLY valid JSON with the following exact schema:
 
           await withTimeout(async (signal) => {
             if (AutoProcessor && Gemma4Model && typeof AutoProcessor.from_pretrained === 'function' && typeof Gemma4Model.from_pretrained === 'function') {
-              const processor = await AutoProcessor.from_pretrained(modelMeta.hfRepo, { progress_callback: onProgress, signal });
+              const processor = await AutoProcessor.from_pretrained(modelMeta.hfRepo, { progress_callback: onProgress, abort_signal: signal });
               const modelInstance = await Gemma4Model.from_pretrained(modelMeta.hfRepo, {
                 dtype: 'q4f16',
                 device: 'webgpu',
                 progress_callback: onProgress,
-                signal
+                abort_signal: signal
               });
               this.loadedProcessor = processor;
               this.loadedModel = modelInstance;
@@ -315,11 +315,11 @@ Return ONLY valid JSON with the following exact schema:
                 dtype: 'q4f16',
                 device: 'webgpu',
                 progress_callback: onProgress,
-                signal
+                abort_signal: signal
               });
               this.loadedPipeline = pipe;
             }
-          }, 5 * 60 * 1000, 'Model download', async () => {
+          }, this.loadTimeoutMs || 5 * 60 * 1000, 'Model download', async () => {
             await this.unloadModel();
           });
 
@@ -362,7 +362,7 @@ Return ONLY valid JSON with the following exact schema:
               ...inputs,
               max_new_tokens: 1024,
               temperature: 0.1,
-              signal
+              abort_signal: signal
             });
             return await this.loadedProcessor.decode(outputs[0], { skip_special_tokens: true });
           } else if (this.loadedPipeline) {
@@ -375,14 +375,14 @@ Return ONLY valid JSON with the following exact schema:
               max_new_tokens: 1024,
               temperature: 0.1,
               return_full_text: false,
-              signal
+              abort_signal: signal
             });
 
             return Array.isArray(output) ? (output[0]?.generated_text || output[0]?.text || '') : (output?.generated_text || output?.text || '');
           } else {
             throw new Error('Transformers.js runtime unavailable in environment');
           }
-        }, 60 * 1000, 'Generation', async () => {
+        }, this.generateTimeoutMs || 60 * 1000, 'Generation', async () => {
           await this.unloadModel();
         });
       };
