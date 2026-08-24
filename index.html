@@ -420,9 +420,9 @@
       <button id="translateBtn" class="primary">Translate to Gemini</button>
       <div id="translationSummary" style="font-size:12.5px; margin-top:8px;"></div>
       <div id="qualityScoreCard" style="display:none; margin-top:10px; background:var(--paper-2); padding:10px; border-radius:3px; font-size:12.5px; border:1px solid var(--line);">
-        <div style="font-weight:700; font-family:var(--type); text-transform:uppercase; margin-bottom:6px;">Translation Quality Assessment</div>
+        <div style="font-weight:700; font-family:var(--type); text-transform:uppercase; margin-bottom:6px;">Translation Risk Assessment</div>
         <div id="qualityScoreMetrics" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:8px;"></div>
-        <div style="font-size:11px; opacity:0.75; margin-top:6px;">Note: SkillMorpher's assessment based on semantic preservation and Gemini constraints.</div>
+        <div style="font-size:11px; opacity:0.75; margin-top:6px;">Note: SkillMorpher's assessment based on translation risk and Gemini constraints.</div>
       </div>
       <div id="diffContainer" style="display:none; margin-top:10px;">
         <label class="small">Translation Diff</label>
@@ -1001,7 +1001,8 @@
       const isCached = localProviderInstance ? await localProviderInstance.checkCache(modelId) : false;
       const hw = hwInfo || (localProviderInstance ? await localProviderInstance.checkHardwareSupport() : null);
       const recNote = (hw && hw.recommendedModel === modelId) ? ' · ★ Recommended for this device' : '';
-      specsEl.textContent = `Size: ${spec.size} · Runtime: ${spec.runtime} · Context: ${spec.context} · Status: ${isCached ? '✓ Cached (Offline Ready)' : 'Not Cached (Download Required)'}${recNote}`;
+      const memNote = (hw && hw.memoryWarning) ? ` · ⚠ ${hw.memoryWarning}` : '';
+      specsEl.textContent = `Download Size: ${spec.size} · Runtime: ${spec.runtime} · Context: ${spec.context} · Status: ${isCached ? '✓ Cached (Offline Ready)' : 'Not Cached (Download Required)'}${recNote}${memNote}`;
     }
   }
 
@@ -1012,7 +1013,20 @@
     const modelId = el('localModelSelect').value;
     if (!localProviderInstance) return;
 
-    statusEl.textContent = `Checking and initializing model ${modelId}…`;
+    const models = BrowserLocalProvider.getModels();
+    const spec = models.find(m => m.id === modelId);
+    const isCached = await localProviderInstance.checkCache(modelId);
+
+    if (!isCached && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      const confirmed = window.confirm(`Model ${spec ? spec.name : modelId} requires downloading ~${spec ? spec.size : '1-2 GB'} over the network. Once downloaded, inference runs 100% locally in your browser. Do you want to proceed with downloading?`);
+      if (!confirmed) {
+        statusEl.textContent = 'Download cancelled by user.';
+        statusEl.className = 'status-msg';
+        return;
+      }
+    }
+
+    statusEl.textContent = `Initializing and loading ${modelId}…`;
     statusEl.className = 'status-msg';
 
     try {
@@ -1021,11 +1035,11 @@
           statusEl.textContent = report.text;
         }
       });
-      statusEl.textContent = `✓ Model ${modelId} loaded and cached in browser.`;
+      statusEl.textContent = `✓ Model ${modelId} successfully loaded and cached in browser.`;
       statusEl.className = 'status-msg ok';
       await updateModelSpecsDisplay();
     } catch (err) {
-      statusEl.textContent = `✕ Download / initialization failed: ${err.message}`;
+      statusEl.textContent = `✕ Download or initialization failed: ${err.message}`;
       statusEl.className = 'status-msg err';
     }
   });
@@ -1109,7 +1123,7 @@
       if (qsCard && qsMetrics && qs) {
         qsCard.style.display = 'block';
         qsMetrics.innerHTML = `
-          <div class="stage-box"><div class="label">Semantic Preservation</div><div class="val">${qs.semanticPreservation}%</div></div>
+          <div class="stage-box"><div class="label">Translation Risk Score</div><div class="val">${qs.translationRiskScore ?? qs.semanticPreservation}%</div></div>
           <div class="stage-box"><div class="label">Gemini Compatibility</div><div class="val">${qs.geminiCompatibility}%</div></div>
           <div class="stage-box"><div class="label">Manual Review</div><div class="val">${qs.manualReviewCount}</div></div>
           <div class="stage-box"><div class="label">Potential Issues</div><div class="val">${qs.potentialIssuesCount}</div></div>

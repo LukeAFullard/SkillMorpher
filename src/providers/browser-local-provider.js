@@ -42,6 +42,8 @@
       this.name = 'Browser Local Model (Gemma 4 WebGPU)';
       this.loadedEngine = null;
       this.loadedPipeline = null;
+      this.loadedProcessor = null;
+      this.loadedModel = null;
       this.currentModelId = null;
       this.isModelLoading = false;
     }
@@ -52,7 +54,7 @@
 
     getStatus() {
       return {
-        loaded: !!(this.loadedEngine || this.loadedPipeline),
+        loaded: !!(this.loadedEngine || this.loadedPipeline || this.loadedModel),
         currentModelId: this.currentModelId || null,
         provider: this.id
       };
@@ -93,14 +95,18 @@
 
         const isLowPower = adapter.isFallbackAdapter || false;
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
-        const recommendedModel = (isLowPower || isMobile) ? 'gemma-4-e2b-it-webgpu' : 'gemma-4-e4b-it-webgpu';
+        const devMem = (typeof navigator !== 'undefined' && navigator.deviceMemory) ? navigator.deviceMemory : null;
+        const lowMemory = devMem && devMem < 4;
+        const recommendedModel = (isLowPower || isMobile || lowMemory) ? 'gemma-4-e2b-it-webgpu' : 'gemma-4-e4b-it-webgpu';
 
         return {
           supported: true,
-          status: isLowPower ? 'MARGINAL' : 'SUPPORTED',
+          status: isLowPower || lowMemory ? 'MARGINAL' : 'SUPPORTED',
           adapterInfo: adapter.info || null,
           recommendedModel,
-          reason: isLowPower ? 'WebGPU running on software/fallback adapter. Gemma 4 E2B recommended.' : (isMobile ? 'Mobile device detected. Gemma 4 E2B recommended for battery & VRAM efficiency.' : 'WebGPU hardware acceleration available. Gemma 4 E4B recommended.')
+          deviceMemoryGB: devMem,
+          memoryWarning: lowMemory ? 'System memory is low (< 4 GB). E2B recommended to prevent OOM errors.' : null,
+          reason: isLowPower ? 'WebGPU running on software/fallback adapter. Gemma 4 E2B recommended.' : (isMobile ? 'Mobile device detected. Gemma 4 E2B recommended for battery & VRAM efficiency.' : (lowMemory ? 'Low system RAM detected. Gemma 4 E2B recommended.' : 'WebGPU hardware acceleration available. Gemma 4 E4B recommended.'))
         };
       } catch (err) {
         return {
@@ -178,8 +184,13 @@
       if (this.loadedPipeline && typeof this.loadedPipeline.dispose === 'function') {
         await this.loadedPipeline.dispose();
       }
+      if (this.loadedModel && typeof this.loadedModel.dispose === 'function') {
+        await this.loadedModel.dispose();
+      }
       this.loadedEngine = null;
       this.loadedPipeline = null;
+      this.loadedProcessor = null;
+      this.loadedModel = null;
       this.currentModelId = null;
       return true;
     }
@@ -248,19 +259,37 @@ Return ONLY valid JSON with the following exact schema:
         const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
         const transformers = globalObj.transformers || globalObj.Transformers;
 
-        if (transformers && typeof transformers.pipeline === 'function') {
-          const pipe = await transformers.pipeline('text-generation', modelMeta.hfRepo, {
-            device: 'webgpu',
-            progress_callback: (report) => {
-              if (progressCallback) {
-                const statusText = report.status ? `${report.status}: ${report.file || ''} (${report.progress ? Math.round(report.progress) + '%' : ''})` : JSON.stringify(report);
-                progressCallback({ ...report, text: statusText });
-              }
+        if (transformers) {
+          const onProgress = (report) => {
+            if (progressCallback) {
+              const statusText = report.status ? `${report.status}: ${report.file || ''} (${report.progress ? Math.round(report.progress) + '%' : ''})` : JSON.stringify(report);
+              progressCallback({ ...report, text: statusText });
             }
-          });
-          this.loadedPipeline = pipe;
+          };
+
+          const AutoProcessor = transformers.AutoProcessor;
+          const Gemma4Model = transformers.Gemma4ForConditionalGeneration || transformers.AutoModelForCausalLM;
+
+          if (AutoProcessor && Gemma4Model && typeof AutoProcessor.from_pretrained === 'function' && typeof Gemma4Model.from_pretrained === 'function') {
+            const processor = await AutoProcessor.from_pretrained(modelMeta.hfRepo, { progress_callback: onProgress });
+            const modelInstance = await Gemma4Model.from_pretrained(modelMeta.hfRepo, {
+              dtype: 'q4f16',
+              device: 'webgpu',
+              progress_callback: onProgress
+            });
+            this.loadedProcessor = processor;
+            this.loadedModel = modelInstance;
+          } else if (typeof transformers.pipeline === 'function') {
+            const pipe = await transformers.pipeline('text-generation', modelMeta.hfRepo, {
+              dtype: 'q4f16',
+              device: 'webgpu',
+              progress_callback: onProgress
+            });
+            this.loadedPipeline = pipe;
+          }
+
           this.currentModelId = modelId;
-          return pipe;
+          return this.loadedPipeline || this.loadedModel;
         }
 
         // Fallback for mock/test environments where transformers global is not present
@@ -277,11 +306,30 @@ Return ONLY valid JSON with the following exact schema:
       const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
       const transformers = globalObj.transformers || globalObj.Transformers;
 
-      if (transformers && !this.loadedPipeline) {
+      if (transformers && !this.loadedPipeline && !this.loadedModel) {
         await this.loadModel(model, progressCallback);
       }
 
-      if (this.loadedPipeline) {
+      let rawContent = '';
+
+      if (this.loadedProcessor && this.loadedModel) {
+        const messages = [
+          { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
+          { role: 'user', content: prompt }
+        ];
+
+        const textPrompt = (typeof this.loadedProcessor.apply_chat_template === 'function')
+          ? this.loadedProcessor.apply_chat_template(messages, { tokenize: false, add_generation_prompt: true })
+          : prompt;
+
+        const inputs = await this.loadedProcessor(textPrompt);
+        const outputs = await this.loadedModel.generate({
+          ...inputs,
+          max_new_tokens: 1024,
+          temperature: 0.1
+        });
+        rawContent = await this.loadedProcessor.decode(outputs[0], { skip_special_tokens: true });
+      } else if (this.loadedPipeline) {
         const messages = [
           { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
           { role: 'user', content: prompt }
@@ -293,32 +341,33 @@ Return ONLY valid JSON with the following exact schema:
           return_full_text: false
         });
 
-        const rawContent = Array.isArray(output) ? (output[0]?.generated_text || output[0]?.text || '') : (output?.generated_text || output?.text || '');
-        let cleanContent = String(rawContent).trim();
-        if (cleanContent.startsWith('```')) {
-          cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-        }
-
-        let parsed;
-        try {
-          parsed = JSON.parse(cleanContent);
-        } catch (e) {
-          throw new Error('Gemma 4 browser LLM output was not valid JSON: ' + rawContent);
-        }
-
-        if (!parsed.translated_skill_md) {
-          throw new Error('Gemma 4 browser LLM JSON output missing "translated_skill_md" field');
-        }
-
-        return {
-          translatedBody: parsed.translated_skill_md,
-          changes: parsed.changes || [],
-          manualReview: parsed.manual_review || [],
-          rawResponse: parsed
-        };
+        rawContent = Array.isArray(output) ? (output[0]?.generated_text || output[0]?.text || '') : (output?.generated_text || output?.text || '');
+      } else {
+        throw new Error('Transformers.js runtime unavailable in environment');
       }
 
-      throw new Error('Transformers.js runtime unavailable in environment');
+      let cleanContent = String(rawContent).trim();
+      if (cleanContent.startsWith('```')) {
+        cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(cleanContent);
+      } catch (e) {
+        throw new Error('Gemma 4 browser LLM output was not valid JSON: ' + rawContent);
+      }
+
+      if (!parsed.translated_skill_md) {
+        throw new Error('Gemma 4 browser LLM JSON output missing "translated_skill_md" field');
+      }
+
+      return {
+        translatedBody: parsed.translated_skill_md,
+        changes: parsed.changes || [],
+        manualReview: parsed.manual_review || [],
+        rawResponse: parsed
+      };
     }
   }
 

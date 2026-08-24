@@ -15,11 +15,21 @@ const TranslationProviders = require('./src/providers/index');
 const Translator = require('./src/translator');
 const BenchmarkCorpus = require('./src/benchmark-corpus');
 
-test('index.html exists and is non-empty', () => {
+test('index.html exists, imports Transformers.js, and contains no WebLLM CDN references', () => {
   const content = fs.readFileSync('index.html', 'utf8');
   assert.ok(content.length > 0, 'index.html should not be empty');
   assert.ok(content.includes('<!doctype html>'), 'index.html should start with doctype');
   assert.ok(content.includes('SkillMorpher'), 'index.html should contain title header');
+  assert.ok(content.includes('transformers.min.js'), 'index.html must import Transformers.js');
+  assert.strictEqual(content.includes('web-llm'), false, 'index.html must not import WebLLM CDN script');
+});
+
+test('browser-test.html exists and contains Gemma 4 E2B/E4B verification suite', () => {
+  assert.ok(fs.existsSync('browser-test.html'), 'browser-test.html should exist');
+  const content = fs.readFileSync('browser-test.html', 'utf8');
+  assert.ok(content.includes('transformers.min.js'), 'browser-test.html must import Transformers.js');
+  assert.ok(content.includes('gemma-4-e2b-it-webgpu'), 'browser-test.html must test Gemma 4 E2B model');
+  assert.ok(content.includes('gemma-4-e4b-it-webgpu'), 'browser-test.html must test Gemma 4 E4B model');
 });
 
 test('index.html contains expected DOM element IDs and script logic', () => {
@@ -807,9 +817,9 @@ test('End-to-End Pipeline on 8 Real Test Skills (Import -> Analyse -> Local Tran
   }
 });
 
-test('Benchmark Corpus of 30 Representative Skills and Benchmark Runner Suite', () => {
+test('Benchmark Corpus of 50 Representative Skills and Benchmark Runner Suite', () => {
   assert.ok(BenchmarkCorpus, 'BenchmarkCorpus module should exist');
-  assert.strictEqual(BenchmarkCorpus.BENCHMARK_SKILLS.length, 30, 'Benchmark corpus must contain exactly 30 representative skills');
+  assert.strictEqual(BenchmarkCorpus.BENCHMARK_SKILLS.length, 50, 'Benchmark corpus must contain 50 representative skills');
 
   const categories = new Set(BenchmarkCorpus.BENCHMARK_SKILLS.map(s => s.category));
   assert.ok(categories.has('Claude'), 'Corpus should contain Claude skills');
@@ -819,7 +829,7 @@ test('Benchmark Corpus of 30 Representative Skills and Benchmark Runner Suite', 
 
   const benchmarkResults = BenchmarkCorpus.runBenchmarkSuite(Validator, Translator, new BrowserLocalProvider());
 
-  assert.strictEqual(benchmarkResults.totalSkills, 30);
+  assert.strictEqual(benchmarkResults.totalSkills, 50);
   assert.ok(benchmarkResults.passedInitialValidation > 20);
   assert.ok(benchmarkResults.passedPostValidation > 20);
   assert.ok(benchmarkResults.averageQualityScore >= 80, `Average quality score should be >= 80 (was ${benchmarkResults.averageQualityScore})`);

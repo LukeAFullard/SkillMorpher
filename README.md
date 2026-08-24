@@ -5,10 +5,15 @@
 ## Features
 
 - **Browser-Local AI Translation (Gemma 4 WebGPU)**:
-  - Runs local AI skill translation directly in your browser using Gemma 4 models (ONNX / WebGPU via WebLLM).
-  - Model ladder locked to **Gemma 4 E2B** (Edge / Fast) and **Gemma 4 E4B** (Edge / Higher Quality — Recommended Default).
-  - Full local model caching (`CacheStorage`), cache status detection, and manual cache deletion.
-  - User-confirmed model downloading — models are never downloaded without explicit user confirmation.
+  - Runs local AI skill translation directly in your browser using Gemma 4 models via **Transformers.js** (`@huggingface/transformers`) and **ONNX / WebGPU**.
+  - Model ladder locked to **Gemma 4 E2B** (`onnx-community/gemma-4-e2b-it-ONNX`) and **Gemma 4 E4B** (`onnx-community/gemma-4-e4b-it-ONNX`).
+  - **Data Privacy & Local Execution**:
+    - Initial model download → network required.
+    - Model cached in browser → local execution.
+    - Inference → 100% browser-local WebGPU.
+    - Skill contents → remain entirely in browser (never uploaded).
+  - Full local model caching (`CacheStorage`), model-specific cache identity, status detection, and manual cache deletion.
+  - Explicit user download confirmation.
   - Graceful fallback to deterministic rule engine when WebGPU or local models are unavailable.
 - **GitHub Repository Library Search**: Browse and fetch skill libraries directly from public GitHub repositories (e.g., `anthropics/skills`, `google-gemini/gemini-skills`, `obra/superpowers`).
 - **Direct Skill Parsing**: Paste raw `SKILL.md` contents or upload `.md` / `.zip` skill bundles.
@@ -50,7 +55,7 @@
 - External Dependencies (via CDN):
   - [JSZip (v3.10.1)](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js): Zip archive reading and creation.
   - [js-yaml (v4.1.0)](https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js): YAML frontmatter parsing and dumping.
-  - [WebLLM (v0.2.46)](https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.46/lib/index.js): WebGPU browser LLM runtime.
+  - [Transformers.js (v3.3.3)](https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js): Transformers.js ONNX WebGPU runtime for browser AI inference.
 
 ## Getting Started / Local Development
 
