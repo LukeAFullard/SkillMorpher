@@ -1136,3 +1136,79 @@ test('Benchmark Corpus of Real Skills and Benchmark Runner Suite', async () => {
   assert.ok(benchmarkResults.averageQualityScore >= 80, `Average quality score should be >= 80 (was ${benchmarkResults.averageQualityScore})`);
   assert.ok(benchmarkResults.manualReviewsTriggered > 0, 'Manual reviews should be triggered for browser-dependent or incompatible tools');
 });
+
+test('Benchmark Corpus browser ensureCorpusLoaded() primary fetch and GitHub raw fallback', async () => {
+  const originalVersions = process.versions;
+  const originalFetch = global.fetch;
+
+  try {
+    Object.defineProperty(process, 'versions', {
+      value: { ...originalVersions, node: undefined },
+      configurable: true
+    });
+
+    const calls = [];
+    global.fetch = async (url) => {
+      calls.push(url);
+      if (url.startsWith('test/fixtures/real-skills/')) {
+        return { ok: false, status: 404 };
+      }
+      if (url.startsWith('https://raw.githubusercontent.com/')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => '---\nname: fallback-skill\n---\nGitHub raw fallback content'
+        };
+      }
+      return { ok: false, status: 404 };
+    };
+
+    BenchmarkCorpus.BENCHMARK_SKILLS.forEach(item => {
+      delete item._instructions;
+    });
+
+    const loaded = await BenchmarkCorpus.ensureCorpusLoaded();
+    assert.ok(loaded.length > 0);
+
+    const githubCall = calls.find(url => url.startsWith('https://raw.githubusercontent.com/'));
+    assert.ok(githubCall, 'Fallback branch should call raw.githubusercontent.com URL');
+
+    const firstItem = loaded[0];
+    assert.ok(firstItem.repo && firstItem.path, 'Corpus items must retain repo and path');
+    assert.strictEqual(firstItem.instructions, 'GitHub raw fallback content', 'Instructions should be loaded from GitHub raw fallback');
+
+    // Test primary fetch path when fixturePath returns ok
+    calls.length = 0;
+    BenchmarkCorpus.BENCHMARK_SKILLS.forEach(item => {
+      delete item._instructions;
+    });
+
+    global.fetch = async (url) => {
+      calls.push(url);
+      if (url.startsWith('test/fixtures/real-skills/')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => '---\nname: primary-skill\n---\nPrimary fixture content'
+        };
+      }
+      return { ok: false, status: 404 };
+    };
+
+    const loadedPrimary = await BenchmarkCorpus.ensureCorpusLoaded();
+    assert.strictEqual(loadedPrimary[0].instructions, 'Primary fixture content', 'Instructions should be loaded from primary fixture path');
+    assert.strictEqual(calls.some(url => url.startsWith('https://raw.githubusercontent.com/')), false, 'Primary path should not trigger fallback when fixture fetch succeeds');
+
+  } finally {
+    Object.defineProperty(process, 'versions', {
+      value: originalVersions,
+      configurable: true
+    });
+    global.fetch = originalFetch;
+
+    BenchmarkCorpus.BENCHMARK_SKILLS.forEach(item => {
+      delete item._instructions;
+    });
+    await BenchmarkCorpus.ensureCorpusLoaded();
+  }
+});

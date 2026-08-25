@@ -133,7 +133,7 @@ async function refreshRealSkills() {
 
   // Create lightweight metadata array (omit instructions text from exported JS file)
   const benchmarkSkillsMetadata = benchmarkSkills.map(s => {
-    const { instructions, path: filePath, ...meta } = s;
+    const { instructions, ...meta } = s;
     return meta;
   });
 
