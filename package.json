@@ -4,7 +4,8 @@
   "description": "SkillMorpher - clear Agent Skills for Gemini Spark",
   "main": "index.html",
   "scripts": {
-    "test": "node --test test.js test/scanner-limitations.test.js"
+    "test": "node --test test.js test/scanner-limitations.test.js",
+    "refresh-corpus": "node scripts/refresh-real-skills.js"
   },
   "keywords": [],
   "author": "",

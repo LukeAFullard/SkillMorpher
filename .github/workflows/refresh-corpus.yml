@@ -1,0 +1,30 @@
+name: Refresh Benchmark Corpus
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Run weekly at midnight UTC on Sunday
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    name: Refresh Real Skills Corpus
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Run refresh-corpus
+        run: npm run refresh-corpus
+
+      - name: Verify tests pass after refresh
+        run: npm test
