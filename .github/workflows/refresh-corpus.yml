@@ -28,3 +28,12 @@ jobs:
 
       - name: Verify tests pass after refresh
         run: npm test
+
+      - name: Create Pull Request for corpus updates
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: 'chore: refresh benchmark real skills corpus'
+          title: 'chore: refresh benchmark real skills corpus'
+          body: 'Automated weekly refresh of vendored benchmark skill fixtures and benchmark-corpus.js.'
+          branch: 'automated-corpus-refresh'
+          delete-branch: true
