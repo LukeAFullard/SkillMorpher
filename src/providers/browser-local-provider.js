@@ -531,11 +531,22 @@ Return ONLY valid JSON with the following exact schema:
         return await withTimeout(async (signal) => {
           if (this.loadedEngine) {
             const chat = await this.loadedEngine.createConversation();
+            const abortHandler = () => {
+              if (chat && typeof chat.delete === 'function') {
+                try { chat.delete().catch(() => {}); } catch (_) {}
+              }
+            };
+            if (signal) {
+              signal.addEventListener('abort', abortHandler);
+            }
             try {
               let textResponse = '';
               if (typeof chat.sendMessageStreaming === 'function') {
                 const stream = chat.sendMessageStreaming(currentPrompt);
                 for await (const chunk of stream) {
+                  if (signal && signal.aborted) {
+                    break;
+                  }
                   let piece = '';
                   if (typeof chunk === 'string') {
                     piece = chunk;
@@ -555,6 +566,9 @@ Return ONLY valid JSON with the following exact schema:
                 }
               } else if (typeof chat.sendMessage === 'function') {
                 const msg = await chat.sendMessage(currentPrompt);
+                if (signal && signal.aborted) {
+                  throw new Error('Generation aborted');
+                }
                 if (typeof msg === 'string') {
                   textResponse = msg;
                 } else if (msg && typeof msg.content === 'string') {
@@ -566,8 +580,14 @@ Return ONLY valid JSON with the following exact schema:
                   progressCallback({ status: 'generating', charsGenerated: textResponse.length });
                 }
               }
+              if (signal && signal.aborted) {
+                throw new Error('Generation timed out');
+              }
               return textResponse;
             } finally {
+              if (signal) {
+                signal.removeEventListener('abort', abortHandler);
+              }
               if (chat && typeof chat.delete === 'function') {
                 try { await chat.delete(); } catch (_) {}
               }
@@ -575,9 +595,7 @@ Return ONLY valid JSON with the following exact schema:
           } else {
             throw new Error('LiteRT-LM core runtime unavailable in environment');
           }
-        }, this.generateTimeoutMs || 60 * 1000, 'Generation', async () => {
-          await this.unloadModel();
-        });
+        }, this.generateTimeoutMs || 60 * 1000, 'Generation');
       };
 
       const isLowConfidence = this.isLowConfidenceOrManualReview(originalBody, analysis);
