@@ -316,7 +316,7 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
   assert.strictEqual(models.length, 2);
   const defaultModel = models.find(m => m.recommended);
   assert.ok(defaultModel);
-  assert.strictEqual(defaultModel.id, 'gemma-4-e4b-it-webgpu');
+  assert.strictEqual(defaultModel.id, 'gemma-4-e2b-it-webgpu');
   assert.strictEqual(defaultModel.context, '128K');
 
   const e2b = models.find(m => m.id === 'gemma-4-e2b-it-webgpu');
@@ -334,6 +334,55 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
   const hw = await provider.checkHardwareSupport();
   assert.strictEqual(hw.supported, false); // Node environment has no navigator.gpu
   assert.strictEqual(hw.status, 'UNSUPPORTED');
+
+  // Test WebGPU hardware checks with simulated navigator.gpu and buffer limits
+  const origNavDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  try {
+    // Case 1: Standard / integrated WebGPU adapter (limited buffer limits <= 512MB) -> conservative E2B
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        gpu: {
+          requestAdapter: async () => ({
+            isFallbackAdapter: false,
+            limits: { maxBufferSize: 268435456, maxStorageBufferBindingSize: 268435456 }
+          })
+        },
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        deviceMemory: 8
+      },
+      configurable: true,
+      writable: true
+    });
+    const hwStandard = await provider.checkHardwareSupport();
+    assert.strictEqual(hwStandard.supported, true);
+    assert.strictEqual(hwStandard.recommendedModel, 'gemma-4-e2b-it-webgpu', 'Standard integrated GPU should recommend conservative E2B');
+    assert.strictEqual(hwStandard.adapterLimits.maxBufferSize, 268435456);
+
+    // Case 2: High VRAM discrete WebGPU adapter (maxBufferSize >= 1GB & maxStorageBufferBindingSize >= 1GB) -> E4B
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        gpu: {
+          requestAdapter: async () => ({
+            isFallbackAdapter: false,
+            limits: { maxBufferSize: 2147483648, maxStorageBufferBindingSize: 2147483648 }
+          })
+        },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        deviceMemory: 16
+      },
+      configurable: true,
+      writable: true
+    });
+    const hwDiscrete = await provider.checkHardwareSupport();
+    assert.strictEqual(hwDiscrete.supported, true);
+    assert.strictEqual(hwDiscrete.recommendedModel, 'gemma-4-e4b-it-webgpu', 'High VRAM GPU with large buffer limits should recommend E4B');
+  } finally {
+    if (origNavDesc) {
+      Object.defineProperty(globalThis, 'navigator', origNavDesc);
+    } else {
+      delete globalThis.navigator;
+    }
+  }
 
   // Test simultaneous load guard flag
   provider.isModelLoading = true;
