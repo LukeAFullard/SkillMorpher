@@ -327,7 +327,7 @@
     <label class="small">Provider</label>
     <div class="row" style="margin-bottom:10px;">
       <select id="providerSelect">
-        <option value="browser-local" selected>Browser Local Model (Gemma 4 WebGPU)</option>
+        <option value="browser-local" selected>Browser Local Model (Gemma 4 LiteRT-LM)</option>
         <option value="deterministic">Deterministic Engine Only (Offline / Rule-Based)</option>
       </select>
       <span id="gpuStatusBadge" class="stamp-tag warn">Checking WebGPU...</span>
@@ -1021,15 +1021,23 @@
     });
 
     if (hw.supported) {
-      badge.className = 'stamp-tag ok';
-      badge.textContent = hw.status === 'SUPPORTED' ? '✓ WebGPU Supported' : '⚠ WebGPU Marginal';
-      badge.style.cursor = 'pointer';
-      badge.title = 'Click for WebGPU setup details';
+      if (hw.cpuFallback) {
+        badge.className = 'stamp-tag warn';
+        badge.textContent = '⚠ CPU Fallback (XNNPACK / WASM)';
+        badge.title = hw.reason;
+        el('modelTestStatus').textContent = hw.reason;
+        el('modelTestStatus').className = 'status-msg warn';
+      } else {
+        badge.className = 'stamp-tag ok';
+        badge.textContent = hw.status === 'SUPPORTED' ? '✓ WebGPU Supported' : '⚠ WebGPU Marginal';
+        badge.style.cursor = 'pointer';
+        badge.title = 'Click for WebGPU setup details';
+      }
     } else {
       badge.className = 'stamp-tag drop';
-      badge.textContent = '✕ WebGPU Unsupported (Click for help)';
+      badge.textContent = '✕ Environment Unsupported';
       badge.style.cursor = 'pointer';
-      badge.title = 'Click for instructions on how to enable WebGPU';
+      badge.title = hw.reason;
       el('modelTestStatus').textContent = hw.reason + ' (Will fall back to deterministic translation)';
       el('modelTestStatus').className = 'status-msg err';
     }
@@ -1069,7 +1077,7 @@
     const isCached = await localProviderInstance.checkCache(modelId);
 
     if (!isCached && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      const vramNote = modelId === 'gemma-4-e4b-it-webgpu'
+      const vramNote = modelId === 'gemma-4-e4b-it-litert'
         ? '\n\nNote: This model needs ~3GB of free GPU memory. If you are unsure of your GPU VRAM, choose E2B instead.'
         : '';
       const confirmed = window.confirm(`Model ${spec ? spec.name : modelId} requires downloading ~${spec ? spec.size : '1-2 GB'} over the network and requires sufficient GPU memory (VRAM). Once downloaded, inference runs 100% locally in your browser.${vramNote}\n\nDo you want to proceed with downloading?`);

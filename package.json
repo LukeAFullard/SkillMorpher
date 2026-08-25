@@ -11,6 +11,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@litert-lm/core": "^0.15.0",
     "js-yaml": "^5.3.0",
     "jszip": "^3.10.1"
   }

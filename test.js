@@ -24,12 +24,12 @@ test('index.html exists and contains no WebLLM CDN references', () => {
   assert.strictEqual(content.includes('web-llm'), false, 'index.html must not import WebLLM CDN script');
 });
 
-test('browser-test.html exists and contains Gemma 4 E2B/E4B verification suite', () => {
+test('browser-test.html exists and contains Gemma 4 E2B/E4B LiteRT-LM verification suite', () => {
   assert.ok(fs.existsSync('browser-test.html'), 'browser-test.html should exist');
   const content = fs.readFileSync('browser-test.html', 'utf8');
   assert.strictEqual(content.includes('transformers.min.js'), false, 'browser-test.html must not import classic transformers.min.js script');
-  assert.ok(content.includes('gemma-4-e2b-it-webgpu'), 'browser-test.html must test Gemma 4 E2B model');
-  assert.ok(content.includes('gemma-4-e4b-it-webgpu'), 'browser-test.html must test Gemma 4 E4B model');
+  assert.ok(content.includes('gemma-4-e2b-it-litert'), 'browser-test.html must test Gemma 4 E2B LiteRT-LM model');
+  assert.ok(content.includes('gemma-4-e4b-it-litert'), 'browser-test.html must test Gemma 4 E4B LiteRT-LM model');
 });
 
 test('index.html contains expected DOM element IDs and script logic', () => {
@@ -270,24 +270,12 @@ test('Translator AI prompt generation and unconfigured/offline fallback handling
 });
 
 test('BrowserLocalProvider: loadModel times out on a hung download', async () => {
-  let capturedAbortSignal = null;
-  global.transformers = {
-    AutoProcessor: {
-      from_pretrained: (repo, opts) => {
-        capturedAbortSignal = opts && opts.abort_signal;
-        return new Promise((resolve, reject) => {
-          if (opts && opts.abort_signal) {
-            opts.abort_signal.addEventListener('abort', () => {
-              const err = new Error('Download aborted');
-              err.name = 'AbortError';
-              reject(err);
-            });
-          }
-        });
-      }
-    },
-    Gemma4ForConditionalGeneration: {
-      from_pretrained: () => new Promise(() => {})
+  let timerId = null;
+  global.litertCore = {
+    Engine: {
+      create: (opts) => new Promise((resolve) => {
+        timerId = setTimeout(resolve, 10000);
+      })
     }
   };
 
@@ -297,16 +285,15 @@ test('BrowserLocalProvider: loadModel times out on a hung download', async () =>
 
   const start = Date.now();
   await assert.rejects(
-    () => provider.loadModel('gemma-4-e2b-it-webgpu'),
+    () => provider.loadModel('gemma-4-e2b-it-litert'),
     /timed out after 100ms/
   );
   const elapsed = Date.now() - start;
 
+  if (timerId) clearTimeout(timerId);
   assert.ok(elapsed < 1000, `Expected timeout in wall-clock bound (< 1000ms), took ${elapsed}ms`);
-  assert.ok(capturedAbortSignal, 'loadModel should pass abort_signal to from_pretrained');
-  assert.strictEqual(capturedAbortSignal.aborted, true, 'abort_signal should be aborted after timeout');
 
-  delete global.transformers;
+  delete global.litertCore;
 });
 
 test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware checking, and simultaneous load guard', async () => {
@@ -316,12 +303,16 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
   assert.strictEqual(models.length, 2);
   const defaultModel = models.find(m => m.recommended);
   assert.ok(defaultModel);
-  assert.strictEqual(defaultModel.id, 'gemma-4-e2b-it-webgpu');
-  assert.strictEqual(defaultModel.context, '128K');
+  assert.strictEqual(defaultModel.id, 'gemma-4-e2b-it-litert');
+  assert.strictEqual(defaultModel.sizeBytes, 2008432640);
 
-  const e2b = models.find(m => m.id === 'gemma-4-e2b-it-webgpu');
+  const e2b = models.find(m => m.id === 'gemma-4-e2b-it-litert');
   assert.ok(e2b);
   assert.strictEqual(e2b.context, '128K');
+
+  const e4b = models.find(m => m.id === 'gemma-4-e4b-it-litert');
+  assert.ok(e4b);
+  assert.strictEqual(e4b.sizeBytes, 2969059328);
 
   const skill = { instructions: 'Use the Bash tool to check code.', description: 'Test skill' };
   const analysis = { gemini: { sourcePlatform: 'anthropic' }, capabilities: ['shellExecution'] };
@@ -332,8 +323,13 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
   assert.ok(structuredPrompt.includes('"translated_skill_md"'));
 
   const hw = await provider.checkHardwareSupport();
-  assert.strictEqual(hw.supported, false); // Node environment has no navigator.gpu
-  assert.strictEqual(hw.status, 'UNSUPPORTED');
+  if (typeof navigator !== 'undefined' && !navigator.gpu) {
+    assert.strictEqual(hw.supported, true);
+    assert.strictEqual(hw.status, 'CPU_FALLBACK');
+  } else if (typeof navigator === 'undefined') {
+    assert.strictEqual(hw.supported, false);
+    assert.strictEqual(hw.status, 'UNSUPPORTED');
+  }
 
   // Test WebGPU hardware checks with simulated navigator.gpu and buffer limits
   const origNavDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
@@ -355,7 +351,7 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
     });
     const hwStandard = await provider.checkHardwareSupport();
     assert.strictEqual(hwStandard.supported, true);
-    assert.strictEqual(hwStandard.recommendedModel, 'gemma-4-e2b-it-webgpu', 'Standard integrated GPU should recommend conservative E2B');
+    assert.strictEqual(hwStandard.recommendedModel, 'gemma-4-e2b-it-litert', 'Standard integrated GPU should recommend conservative E2B');
     assert.strictEqual(hwStandard.adapterLimits.maxBufferSize, 268435456);
 
     // Case 2: High VRAM discrete WebGPU adapter (maxBufferSize >= 1GB & maxStorageBufferBindingSize >= 1GB) -> E4B
@@ -375,7 +371,18 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
     });
     const hwDiscrete = await provider.checkHardwareSupport();
     assert.strictEqual(hwDiscrete.supported, true);
-    assert.strictEqual(hwDiscrete.recommendedModel, 'gemma-4-e4b-it-webgpu', 'High VRAM GPU with large buffer limits should recommend E4B');
+    assert.strictEqual(hwDiscrete.recommendedModel, 'gemma-4-e4b-it-litert', 'High VRAM GPU with large buffer limits should recommend E4B');
+
+    // Case 3: Navigator without GPU -> CPU Fallback
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: 'Mozilla/5.0', deviceMemory: 8 },
+      configurable: true,
+      writable: true
+    });
+    const hwCpu = await provider.checkHardwareSupport();
+    assert.strictEqual(hwCpu.supported, true);
+    assert.strictEqual(hwCpu.status, 'CPU_FALLBACK');
+    assert.strictEqual(hwCpu.cpuFallback, true);
   } finally {
     if (origNavDesc) {
       Object.defineProperty(globalThis, 'navigator', origNavDesc);
@@ -387,7 +394,7 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
   // Test simultaneous load guard flag
   provider.isModelLoading = true;
   await assert.rejects(
-    async () => { await provider.loadModel('gemma-4-e4b-it-webgpu'); },
+    async () => { await provider.loadModel('gemma-4-e4b-it-litert'); },
     /Another model is currently downloading/
   );
   provider.isModelLoading = false;
@@ -403,46 +410,37 @@ test('BrowserLocalProvider resource lifecycle, prompt capping, decoding slice, a
   assert.ok(!prompt.includes('A'.repeat(10000)), 'buildStructuredPrompt should not include huge body un-truncated');
 
   // Test 2: unloadModel error resilience
-  let dispose1Called = false;
-  let dispose2Failed = false;
-  let dispose3Called = false;
-
-  provider.loadedEngine = { dispose: async () => { dispose1Called = true; } };
-  provider.loadedPipeline = { dispose: async () => { dispose2Failed = true; throw new Error('Disposal failed'); } };
-  provider.loadedModel = { dispose: async () => { dispose3Called = true; } };
+  let deleteCalled = false;
+  provider.loadedEngine = { delete: async () => { deleteCalled = true; } };
 
   const unloaded = await provider.unloadModel();
   assert.strictEqual(unloaded, true);
-  assert.strictEqual(dispose1Called, true);
-  assert.strictEqual(dispose2Failed, true);
-  assert.strictEqual(dispose3Called, true);
-  assert.strictEqual(provider.getStatus().loaded, false, 'getStatus().loaded should be false after unloadModel even if disposal threw');
+  assert.strictEqual(deleteCalled, true);
+  assert.strictEqual(provider.getStatus().loaded, false, 'getStatus().loaded should be false after unloadModel');
 
   // Test 3: loadModel idempotency and previous model unloading
   let previousUnloaded = false;
   provider.checkHardwareSupport = async () => ({ supported: true, status: 'SUPPORTED' });
 
-  provider.currentModelId = 'gemma-4-e2b-it-webgpu';
-  provider.loadedModel = { dispose: async () => { previousUnloaded = true; } };
+  provider.currentModelId = 'gemma-4-e2b-it-litert';
+  provider.loadedEngine = { delete: async () => { previousUnloaded = true; } };
 
   // Re-entry of same loaded model is no-op
-  const sameRes = await provider.loadModel('gemma-4-e2b-it-webgpu');
+  const sameRes = await provider.loadModel('gemma-4-e2b-it-litert');
   assert.strictEqual(previousUnloaded, false, 'Same model re-entry should not unload');
 
   // Switching model unloads previous model
-  await provider.loadModel('gemma-4-e4b-it-webgpu');
+  global.litertCore = { Engine: { create: async () => ({ delete: async () => {} }) } };
+  await provider.loadModel('gemma-4-e4b-it-litert');
   assert.strictEqual(previousUnloaded, true, 'Switching model should unload previous model');
 
   // Test 4: loadModel failure cleanup on generic exception
   let unloadCalledOnCatch = false;
   const originalUnloadModel = provider.unloadModel.bind(provider);
 
-  global.transformers = {
-    AutoProcessor: {
-      from_pretrained: async () => { throw new Error('Simulated download failure mid-way'); }
-    },
-    Gemma4ForConditionalGeneration: {
-      from_pretrained: async () => ({})
+  global.litertCore = {
+    Engine: {
+      create: async () => { throw new Error('Simulated download failure mid-way'); }
     }
   };
 
@@ -452,23 +450,25 @@ test('BrowserLocalProvider resource lifecycle, prompt capping, decoding slice, a
   };
 
   await assert.rejects(
-    () => provider.loadModel('gemma-4-e2b-it-webgpu'),
+    () => provider.loadModel('gemma-4-e2b-it-litert'),
     /Simulated download failure mid-way/
   );
   assert.strictEqual(unloadCalledOnCatch, true, 'loadModel should call unloadModel on any exception');
   provider.unloadModel = originalUnloadModel;
-  delete global.transformers;
+  delete global.litertCore;
 
   // Test 5: Hardware marginal model substitution
   provider.checkHardwareSupport = async () => ({
     supported: true,
     status: 'MARGINAL',
-    recommendedModel: 'gemma-4-e2b-it-webgpu',
+    recommendedModel: 'gemma-4-e2b-it-litert',
     memoryWarning: 'System memory is low'
   });
 
-  const loadedRes = await provider.loadModel('gemma-4-e4b-it-webgpu');
-  assert.strictEqual(provider.currentModelId, 'gemma-4-e2b-it-webgpu', 'Low-memory marginal device should substitute E2B when E4B is requested');
+  global.litertCore = { Engine: { create: async () => ({ delete: async () => {} }) } };
+  const loadedRes = await provider.loadModel('gemma-4-e4b-it-litert');
+  assert.strictEqual(provider.currentModelId, 'gemma-4-e2b-it-litert', 'Low-memory marginal device should substitute E2B when E4B is requested');
+  delete global.litertCore;
 });
 
 test('Translator translateWithProvider routing and fallback behavior for Gemma 4', async () => {
@@ -479,7 +479,7 @@ test('Translator translateWithProvider routing and fallback behavior for Gemma 4
 
   const resFailing = await Translator.translateWithProvider({
     provider: failingProvider,
-    model: 'gemma-4-e4b-it-webgpu',
+    model: 'gemma-4-e4b-it-litert',
     skill,
     targetKey: 'geminiSpark'
   });
@@ -500,14 +500,14 @@ test('Translator translateWithProvider routing and fallback behavior for Gemma 4
 
   const resSuccess = await Translator.translateWithProvider({
     provider: successProvider,
-    model: 'gemma-4-e4b-it-webgpu',
+    model: 'gemma-4-e4b-it-litert',
     skill,
     targetKey: 'geminiSpark'
   });
 
   assert.strictEqual(resSuccess.mode, 'provider');
   assert.strictEqual(resSuccess.providerId, 'browser-local');
-  assert.strictEqual(resSuccess.model, 'gemma-4-e4b-it-webgpu');
+  assert.strictEqual(resSuccess.model, 'gemma-4-e4b-it-litert');
 });
 
 test('AI Translation Failure Paths: generateAndParse retry logic and mid-generation provider fallback', async () => {
