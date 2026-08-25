@@ -296,6 +296,49 @@ test('BrowserLocalProvider: loadModel times out on a hung download', async () =>
   delete global.litertCore;
 });
 
+test('BrowserLocalProvider: generation timeout deletes chat session and retains engine', async () => {
+  let chatDeleted = false;
+  let engineDeleted = false;
+
+  const mockEngine = {
+    createConversation: async () => ({
+      sendMessageStreaming: async function* () {
+        // Yield one chunk, then stall forever
+        yield '{"translated_skill_md": "';
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      },
+      delete: async () => {
+        chatDeleted = true;
+      }
+    }),
+    delete: async () => {
+      engineDeleted = true;
+    }
+  };
+
+  global.litertCore = {
+    Engine: { create: async () => mockEngine }
+  };
+
+  const provider = new BrowserLocalProvider();
+  provider.generateTimeoutMs = 100;
+  provider.loadedEngine = mockEngine;
+  provider.currentModelId = 'gemma-4-e2b-it-litert';
+
+  const skill = { instructions: 'Use the `computer` tool to open browser.', description: 'Test' };
+
+  await assert.rejects(
+    () => provider.translate({ skill, target: 'gemini-spark', model: 'gemma-4-e2b-it-litert' }),
+    /Generation timed out after 100ms/
+  );
+
+  assert.strictEqual(chatDeleted, true, 'Chat session delete should be called upon generation timeout');
+  assert.strictEqual(engineDeleted, false, 'Loaded engine should NOT be deleted on generation timeout');
+  assert.strictEqual(provider.loadedEngine, mockEngine, 'Loaded engine reference should be retained after timeout');
+
+  delete global.litertCore;
+});
+
 test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware checking, and simultaneous load guard', async () => {
   const provider = new BrowserLocalProvider();
   const models = BrowserLocalProvider.getModels();
