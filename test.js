@@ -344,6 +344,84 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
   provider.isModelLoading = false;
 });
 
+test('BrowserLocalProvider resource lifecycle, prompt capping, decoding slice, and hardware enforcement', async () => {
+  const provider = new BrowserLocalProvider();
+
+  // Test 1: Prompt capping
+  const hugeBody = 'A'.repeat(15000);
+  const prompt = provider.buildStructuredPrompt({ skill: { instructions: hugeBody }, target: 'gemini-spark' });
+  assert.ok(prompt.includes('[... truncated for local browser inference ...]'), 'buildStructuredPrompt should truncate long skill instructions');
+  assert.ok(!prompt.includes('A'.repeat(10000)), 'buildStructuredPrompt should not include huge body un-truncated');
+
+  // Test 2: unloadModel error resilience
+  let dispose1Called = false;
+  let dispose2Failed = false;
+  let dispose3Called = false;
+
+  provider.loadedEngine = { dispose: async () => { dispose1Called = true; } };
+  provider.loadedPipeline = { dispose: async () => { dispose2Failed = true; throw new Error('Disposal failed'); } };
+  provider.loadedModel = { dispose: async () => { dispose3Called = true; } };
+
+  const unloaded = await provider.unloadModel();
+  assert.strictEqual(unloaded, true);
+  assert.strictEqual(dispose1Called, true);
+  assert.strictEqual(dispose2Failed, true);
+  assert.strictEqual(dispose3Called, true);
+  assert.strictEqual(provider.getStatus().loaded, false, 'getStatus().loaded should be false after unloadModel even if disposal threw');
+
+  // Test 3: loadModel idempotency and previous model unloading
+  let previousUnloaded = false;
+  provider.checkHardwareSupport = async () => ({ supported: true, status: 'SUPPORTED' });
+
+  provider.currentModelId = 'gemma-4-e2b-it-webgpu';
+  provider.loadedModel = { dispose: async () => { previousUnloaded = true; } };
+
+  // Re-entry of same loaded model is no-op
+  const sameRes = await provider.loadModel('gemma-4-e2b-it-webgpu');
+  assert.strictEqual(previousUnloaded, false, 'Same model re-entry should not unload');
+
+  // Switching model unloads previous model
+  await provider.loadModel('gemma-4-e4b-it-webgpu');
+  assert.strictEqual(previousUnloaded, true, 'Switching model should unload previous model');
+
+  // Test 4: loadModel failure cleanup on generic exception
+  let unloadCalledOnCatch = false;
+  const originalUnloadModel = provider.unloadModel.bind(provider);
+
+  global.transformers = {
+    AutoProcessor: {
+      from_pretrained: async () => { throw new Error('Simulated download failure mid-way'); }
+    },
+    Gemma4ForConditionalGeneration: {
+      from_pretrained: async () => ({})
+    }
+  };
+
+  provider.unloadModel = async function() {
+    unloadCalledOnCatch = true;
+    return await originalUnloadModel();
+  };
+
+  await assert.rejects(
+    () => provider.loadModel('gemma-4-e2b-it-webgpu'),
+    /Simulated download failure mid-way/
+  );
+  assert.strictEqual(unloadCalledOnCatch, true, 'loadModel should call unloadModel on any exception');
+  provider.unloadModel = originalUnloadModel;
+  delete global.transformers;
+
+  // Test 5: Hardware marginal model substitution
+  provider.checkHardwareSupport = async () => ({
+    supported: true,
+    status: 'MARGINAL',
+    recommendedModel: 'gemma-4-e2b-it-webgpu',
+    memoryWarning: 'System memory is low'
+  });
+
+  const loadedRes = await provider.loadModel('gemma-4-e4b-it-webgpu');
+  assert.strictEqual(provider.currentModelId, 'gemma-4-e2b-it-webgpu', 'Low-memory marginal device should substitute E2B when E4B is requested');
+});
+
 test('Translator translateWithProvider routing and fallback behavior for Gemma 4', async () => {
   const skill = { instructions: 'Use the Bash tool to inspect the repository.', description: 'Test' };
 
