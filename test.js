@@ -324,8 +324,8 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
 
   const hw = await provider.checkHardwareSupport();
   if (typeof navigator !== 'undefined' && !navigator.gpu) {
-    assert.strictEqual(hw.supported, true);
-    assert.strictEqual(hw.status, 'CPU_FALLBACK');
+    assert.strictEqual(hw.supported, false);
+    assert.strictEqual(hw.status, 'UNSUPPORTED');
   } else if (typeof navigator === 'undefined') {
     assert.strictEqual(hw.supported, false);
     assert.strictEqual(hw.status, 'UNSUPPORTED');
@@ -373,16 +373,16 @@ test('BrowserLocalProvider Gemma 4 model ladder, prompt formatting, hardware che
     assert.strictEqual(hwDiscrete.supported, true);
     assert.strictEqual(hwDiscrete.recommendedModel, 'gemma-4-e4b-it-litert', 'High VRAM GPU with large buffer limits should recommend E4B');
 
-    // Case 3: Navigator without GPU -> CPU Fallback
+    // Case 3: Navigator without GPU -> Unsupported (No CPU fallback for Gemma 4)
     Object.defineProperty(globalThis, 'navigator', {
       value: { userAgent: 'Mozilla/5.0', deviceMemory: 8 },
       configurable: true,
       writable: true
     });
     const hwCpu = await provider.checkHardwareSupport();
-    assert.strictEqual(hwCpu.supported, true);
-    assert.strictEqual(hwCpu.status, 'CPU_FALLBACK');
-    assert.strictEqual(hwCpu.cpuFallback, true);
+    assert.strictEqual(hwCpu.supported, false);
+    assert.strictEqual(hwCpu.status, 'UNSUPPORTED');
+    assert.ok(hwCpu.reason.includes('Gemma 4 requires WebGPU'));
   } finally {
     if (origNavDesc) {
       Object.defineProperty(globalThis, 'navigator', origNavDesc);
@@ -469,6 +469,51 @@ test('BrowserLocalProvider resource lifecycle, prompt capping, decoding slice, a
   const loadedRes = await provider.loadModel('gemma-4-e4b-it-litert');
   assert.strictEqual(provider.currentModelId, 'gemma-4-e2b-it-litert', 'Low-memory marginal device should substitute E2B when E4B is requested');
   delete global.litertCore;
+});
+
+test('BrowserLocalProvider targeted span translation vs full-document fallback', async () => {
+  const provider = new BrowserLocalProvider();
+  provider.loadedEngine = {
+    createConversation: async () => ({
+      sendMessageStreaming: async function* (prompt) {
+        if (prompt.includes('Translate only the specific platform-dependent snippets')) {
+          yield '{"changes": [{"original": "Use the Bash tool to inspect the repository.", "replacement": "Inspect the repository files available to you.", "reason": "Gemini tool equivalent", "confidence": "high"}], "manual_review": []}';
+        } else {
+          yield '{"translated_skill_md": "Full document fallback text.", "changes": [], "manual_review": []}';
+        }
+      },
+      delete: async () => {}
+    })
+  };
+
+  // Targeted translation path when candidate spans exist and no manual review blockers
+  const skillTargeted = {
+    instructions: 'Use the Bash tool to inspect the repository.\nPerform standard operations.',
+    description: 'Targeted test'
+  };
+  const targetedRes = await provider.translate({
+    skill: skillTargeted,
+    target: 'gemini-spark',
+    model: 'gemma-4-e2b-it-litert'
+  });
+
+  assert.strictEqual(targetedRes.targeted, true);
+  assert.ok(targetedRes.translatedBody.includes('Inspect the repository files available to you.'));
+  assert.strictEqual(targetedRes.changes.length, 1);
+
+  // Full-document fallback path when manual review blocker is present
+  const skillFallback = {
+    instructions: 'Use the `computer` tool to open browser.',
+    description: 'Fallback test'
+  };
+  const fallbackRes = await provider.translate({
+    skill: skillFallback,
+    target: 'gemini-spark',
+    model: 'gemma-4-e2b-it-litert'
+  });
+
+  assert.strictEqual(fallbackRes.targeted, false);
+  assert.strictEqual(fallbackRes.translatedBody, 'Full document fallback text.');
 });
 
 test('Translator translateWithProvider routing and fallback behavior for Gemma 4', async () => {

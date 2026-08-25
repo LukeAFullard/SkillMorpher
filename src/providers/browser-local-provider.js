@@ -1,13 +1,20 @@
 (function (root, factory) {
   if (typeof define === 'function' && define.amd) {
-    define([], factory);
+    define(['../platforms/gemini-spark'], factory);
   } else if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('../platforms/gemini-spark'));
   } else {
-    root.BrowserLocalProvider = factory();
+    root.BrowserLocalProvider = factory(root.GeminiSparkMappings);
   }
-}(typeof self !== 'undefined' ? self : this, function () {
+}(typeof self !== 'undefined' ? self : this, function (GeminiSparkMappings) {
   'use strict';
+
+  function getSparkMappings() {
+    if (GeminiSparkMappings) return GeminiSparkMappings;
+    if (typeof self !== 'undefined' && self.GeminiSparkMappings) return self.GeminiSparkMappings;
+    if (typeof globalThis !== 'undefined' && globalThis.GeminiSparkMappings) return globalThis.GeminiSparkMappings;
+    return null;
+  }
 
   const MODELS = [
     {
@@ -61,6 +68,40 @@
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async function fetchModelWithProgress(url, progressCallback, modelName, signal) {
+    if (typeof window === 'undefined' || typeof fetch !== 'function') {
+      return url;
+    }
+    const res = await fetch(url, { signal });
+    if (!res.ok) {
+      throw new Error(`Failed to download model file: HTTP ${res.status}`);
+    }
+    if (!res.body || typeof res.body.getReader !== 'function') {
+      if (typeof res.blob === 'function') {
+        return await res.blob();
+      }
+      return url;
+    }
+    const total = Number(res.headers.get('Content-Length')) || 0;
+    const reader = res.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      if (progressCallback) {
+        const progress = total ? Math.round((loaded / total) * 100) : 0;
+        const text = total
+          ? `Downloading ${modelName || 'model'}: ${progress}% (${(loaded / (1024 * 1024)).toFixed(1)} / ${(total / (1024 * 1024)).toFixed(1)} MB)`
+          : `Downloading ${modelName || 'model'}: ${(loaded / (1024 * 1024)).toFixed(1)} MB downloaded`;
+        progressCallback({ status: 'downloading', progress, loaded, total, text });
+      }
+    }
+    return new Blob(chunks);
   }
 
   async function generateAndParse(gen, prompt, retriesLeft = 1) {
@@ -122,7 +163,7 @@
         localInference: true,
         offlineCapable: true,
         webgpuPreferred: true,
-        cpuFallbackAvailable: true,
+        cpuFallbackAvailable: false,
         supportedTargets: ['geminiSpark', 'geminiCli'],
         outputFormat: 'json_object'
       };
@@ -135,11 +176,9 @@
 
       if (!navigator.gpu) {
         return {
-          supported: true,
-          status: 'CPU_FALLBACK',
-          cpuFallback: true,
-          recommendedModel: 'gemma-4-e2b-it-litert',
-          reason: 'WebGPU is not supported or enabled in this browser. LiteRT-LM will run on CPU (XNNPACK/WASM), which will be slow.'
+          supported: false,
+          status: 'UNSUPPORTED',
+          reason: 'Gemma 4 requires WebGPU — these models are GPU-compiled and cannot run on CPU. Enable WebGPU or use the deterministic (non-AI) translation path instead.'
         };
       }
 
@@ -147,11 +186,9 @@
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) {
           return {
-            supported: true,
-            status: 'CPU_FALLBACK',
-            cpuFallback: true,
-            recommendedModel: 'gemma-4-e2b-it-litert',
-            reason: 'WebGPU adapter could not be initialized. LiteRT-LM will run on CPU (XNNPACK/WASM), which will be slow.'
+            supported: false,
+            status: 'UNSUPPORTED',
+            reason: 'WebGPU adapter could not be initialized. Gemma 4 requires WebGPU — these models are GPU-compiled and cannot run on CPU. Enable WebGPU or use the deterministic (non-AI) translation path instead.'
           };
         }
 
@@ -198,11 +235,9 @@
         };
       } catch (err) {
         return {
-          supported: true,
-          status: 'CPU_FALLBACK',
-          cpuFallback: true,
-          recommendedModel: 'gemma-4-e2b-it-litert',
-          reason: `WebGPU initialization failed: ${err.message}. LiteRT-LM will run on CPU (XNNPACK/WASM), which will be slow.`
+          supported: false,
+          status: 'UNSUPPORTED',
+          reason: `WebGPU initialization failed: ${err.message}. Gemma 4 requires WebGPU — these models are GPU-compiled and cannot run on CPU. Enable WebGPU or use the deterministic (non-AI) translation path instead.`
         };
       }
     }
@@ -280,6 +315,83 @@
       this.loadedEngine = null;
       this.currentModelId = null;
       return true;
+    }
+
+    isLowConfidenceOrManualReview(instructions, analysis) {
+      if (!instructions) return false;
+      const spark = getSparkMappings();
+      const blockers = (spark && spark.MANUAL_REVIEW_BLOCKERS) || [];
+      if (blockers.some(b => b.pattern.test(instructions))) {
+        return true;
+      }
+      if (analysis) {
+        if (analysis.security && analysis.security.blockers && analysis.security.blockers.length > 0) return true;
+        if (analysis.unsupported && analysis.unsupported.length > 0) return true;
+        if (analysis.gemini && analysis.gemini.status === 'NEEDS TRANSLATION' && analysis.gemini.manualReviewRequired) return true;
+      }
+      return false;
+    }
+
+    findCandidateSpans(instructions) {
+      if (!instructions) return [];
+      const spans = [];
+      const lines = instructions.split('\n');
+      const spark = getSparkMappings();
+      const mappings = (spark && spark.MAPPINGS) || [];
+
+      mappings.forEach(m => {
+        if (m.manualReviewRequired) return;
+        const regex = new RegExp(m.pattern.source, m.pattern.flags);
+        lines.forEach((line, idx) => {
+          if (regex.test(line)) {
+            const startLine = Math.max(0, idx - 1);
+            const endLine = Math.min(lines.length - 1, idx + 1);
+            const context = lines.slice(startLine, endLine + 1).join('\n');
+            const originalSnippet = line.trim();
+            if (originalSnippet && !spans.some(s => s.original === originalSnippet)) {
+              spans.push({
+                original: originalSnippet,
+                lineIndex: idx,
+                context,
+                mapping: m
+              });
+            }
+          }
+        });
+      });
+
+      return spans;
+    }
+
+    buildTargetedPrompt({ skill, spans, target = 'gemini-spark' }) {
+      const formattedSpans = spans.map((s, i) => {
+        return `Snippet ${i + 1}:
+Original text: "${s.original}"
+Surrounding Context:
+${s.context}`;
+      }).join('\n\n');
+
+      return `You are a Gemma 4 Agent Skill Translator running locally in the browser via LiteRT-LM / WebGPU.
+Translate only the specific platform-dependent snippets below into functionally equivalent instructions for ${target}.
+
+Target Platform: ${target}
+
+Snippets to Translate:
+${formattedSpans}
+
+Requirements:
+Return ONLY valid JSON with the following exact schema:
+{
+  "changes": [
+    {
+      "original": "exact original snippet string from input",
+      "replacement": "exact translated replacement snippet",
+      "reason": "explanation of translation",
+      "confidence": "high|medium|low"
+    }
+  ],
+  "manual_review": []
+}`;
     }
 
     buildStructuredPrompt({ skill, analysis, target = 'gemini-spark' }) {
@@ -375,7 +487,16 @@ Return ONLY valid JSON with the following exact schema:
 
         if (litert && litert.Engine && typeof litert.Engine.create === 'function') {
           await withTimeout(async (signal) => {
-            const engine = await litert.Engine.create({ model: modelMeta.webUrl });
+            let modelInput = modelMeta.webUrl;
+            try {
+              modelInput = await fetchModelWithProgress(modelMeta.webUrl, progressCallback, modelMeta.name, signal);
+            } catch (fetchErr) {
+              console.warn('Manual fetch with progress failed or unneeded, attempting direct Engine.create:', fetchErr);
+            }
+            if (progressCallback) {
+              progressCallback({ status: 'initializing', text: `Initializing ${modelMeta.name} engine...` });
+            }
+            const engine = await litert.Engine.create({ model: modelInput });
             this.loadedEngine = engine;
           }, this.loadTimeoutMs || 5 * 60 * 1000, 'Model download & initialization', async () => {
             await this.unloadModel();
@@ -397,7 +518,7 @@ Return ONLY valid JSON with the following exact schema:
     }
 
     async translate({ skill, analysis, target = 'gemini-spark', model = 'gemma-4-e4b-it-litert', progressCallback }) {
-      const prompt = this.buildStructuredPrompt({ skill, analysis, target });
+      const originalBody = skill.instructions || skill.body || '';
 
       const globalObj = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : root);
       const litert = await loadLiteRtRuntime(globalObj);
@@ -412,7 +533,27 @@ Return ONLY valid JSON with the following exact schema:
             const chat = await this.loadedEngine.createConversation();
             try {
               let textResponse = '';
-              if (typeof chat.sendMessage === 'function') {
+              if (typeof chat.sendMessageStreaming === 'function') {
+                const stream = chat.sendMessageStreaming(currentPrompt);
+                for await (const chunk of stream) {
+                  let piece = '';
+                  if (typeof chunk === 'string') {
+                    piece = chunk;
+                  } else if (chunk) {
+                    if (typeof chunk.content === 'string') {
+                      piece = chunk.content;
+                    } else if (Array.isArray(chunk.content)) {
+                      piece = chunk.content.map(p => (typeof p === 'string' ? p : p.text || '')).join('');
+                    } else if (typeof chunk.text === 'string') {
+                      piece = chunk.text;
+                    }
+                  }
+                  textResponse += piece;
+                  if (progressCallback) {
+                    progressCallback({ status: 'generating', charsGenerated: textResponse.length });
+                  }
+                }
+              } else if (typeof chat.sendMessage === 'function') {
                 const msg = await chat.sendMessage(currentPrompt);
                 if (typeof msg === 'string') {
                   textResponse = msg;
@@ -421,16 +562,8 @@ Return ONLY valid JSON with the following exact schema:
                 } else if (msg && Array.isArray(msg.content)) {
                   textResponse = msg.content.map(part => (typeof part === 'string' ? part : part.text || '')).join('');
                 }
-              } else if (typeof chat.sendMessageStreaming === 'function') {
-                const stream = chat.sendMessageStreaming(currentPrompt);
-                for await (const chunk of stream) {
-                  if (typeof chunk === 'string') {
-                    textResponse += chunk;
-                  } else if (chunk && typeof chunk.content === 'string') {
-                    textResponse += chunk.content;
-                  } else if (chunk && Array.isArray(chunk.content)) {
-                    textResponse += chunk.content.map(part => (typeof part === 'string' ? part : part.text || '')).join('');
-                  }
+                if (progressCallback) {
+                  progressCallback({ status: 'generating', charsGenerated: textResponse.length });
                 }
               }
               return textResponse;
@@ -447,6 +580,47 @@ Return ONLY valid JSON with the following exact schema:
         });
       };
 
+      const isLowConfidence = this.isLowConfidenceOrManualReview(originalBody, analysis);
+      const spans = !isLowConfidence ? this.findCandidateSpans(originalBody) : [];
+
+      if (!isLowConfidence && spans.length > 0) {
+        try {
+          const targetedPrompt = this.buildTargetedPrompt({ skill, spans, target });
+          const parsedTargeted = await generateAndParse(gen, targetedPrompt, 1);
+          if (parsedTargeted && Array.isArray(parsedTargeted.changes) && parsedTargeted.changes.length > 0) {
+            let translatedBody = originalBody;
+            const appliedChanges = [];
+
+            for (const c of parsedTargeted.changes) {
+              if (c.original && c.replacement) {
+                if (translatedBody.includes(c.original)) {
+                  translatedBody = translatedBody.replace(c.original, c.replacement);
+                }
+                appliedChanges.push({
+                  original: c.original,
+                  replacement: c.replacement,
+                  reason: c.reason || 'Targeted Gemma 4 translation',
+                  confidence: c.confidence || 'high'
+                });
+              }
+            }
+
+            if (appliedChanges.length > 0) {
+              return {
+                translatedBody,
+                changes: appliedChanges,
+                manualReview: parsedTargeted.manual_review || [],
+                rawResponse: parsedTargeted,
+                targeted: true
+              };
+            }
+          }
+        } catch (targetedErr) {
+          console.warn('Targeted span translation failed or invalid, falling back to full-document prompt:', targetedErr);
+        }
+      }
+
+      const prompt = this.buildStructuredPrompt({ skill, analysis, target });
       const parsed = await generateAndParse(gen, prompt, 1);
 
       if (!parsed.translated_skill_md) {
@@ -457,7 +631,8 @@ Return ONLY valid JSON with the following exact schema:
         translatedBody: parsed.translated_skill_md,
         changes: parsed.changes || [],
         manualReview: parsed.manual_review || [],
-        rawResponse: parsed
+        rawResponse: parsed,
+        targeted: false
       };
     }
   }
