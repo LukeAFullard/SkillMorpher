@@ -411,5 +411,6 @@ Return ONLY valid JSON with the following exact schema:
   }
 
   BrowserLocalProvider.MODELS = MODELS;
+  BrowserLocalProvider.generateAndParse = generateAndParse;
   return BrowserLocalProvider;
 }));

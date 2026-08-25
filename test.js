@@ -204,6 +204,55 @@ test('Translator engine performs concrete Gemini translations, manual review war
   assert.strictEqual(res.confidenceCounts.NONE, 1);
 });
 
+test('Gemini Spark deterministic mappings: Widened pattern tests on realistic skill phrasing', () => {
+  const testCases = [
+    {
+      input: 'Execute diagnostic steps in bash commands to inspect workspace state.',
+      expected: 'execute required local commands where shell access is available'
+    },
+    {
+      input: 'Read templates/viewer.html using the Read tool.',
+      expected: 'by inspecting and reading the specified file'
+    },
+    {
+      input: 'Use create_file to scaffold the initial template.',
+      expected: 'direct file editing'
+    },
+    {
+      input: 'Run data processing scripts in the Code Interpreter environment.',
+      expected: 'executing local code in the available runtime'
+    },
+    {
+      input: 'Scaffold interactive components for ChatGPT Apps SDK.',
+      expected: 'Gemini Spark custom skill environment'
+    },
+    {
+      input: 'Configure workflows for OpenAI Assistants API.',
+      expected: 'Gemini agent environment'
+    },
+    {
+      input: 'Run verification tests via playwright-cli in headful mode.',
+      expected: 'Manual review required'
+    },
+    {
+      input: 'Validate doc accessibility in claude.ai with a fresh Claude instance.',
+      expected: 'Gemini workspace / Gemini model'
+    },
+    {
+      input: 'Connect to the mcp server to query external schemas.',
+      expected: 'Manual review required'
+    }
+  ];
+
+  for (const tc of testCases) {
+    const res = Translator.translateSkill({ instructions: tc.input, description: 'Test' }, 'geminiSpark');
+    assert.ok(
+      res.translatedBody.includes(tc.expected),
+      `Expected "${tc.input}" to translate to contain "${tc.expected}", got:\n${res.translatedBody}`
+    );
+  }
+});
+
 test('Translator AI prompt generation and unconfigured/offline fallback handling', async () => {
   const skill = {
     instructions: 'Use the Bash tool to inspect the repository.',
@@ -332,6 +381,88 @@ test('Translator translateWithProvider routing and fallback behavior for Gemma 4
   assert.strictEqual(resSuccess.mode, 'provider');
   assert.strictEqual(resSuccess.providerId, 'browser-local');
   assert.strictEqual(resSuccess.model, 'gemma-4-e4b-it-webgpu');
+});
+
+test('AI Translation Failure Paths: generateAndParse retry logic and mid-generation provider fallback', async () => {
+  const generateAndParse = BrowserLocalProvider.generateAndParse;
+  assert.strictEqual(typeof generateAndParse, 'function', 'generateAndParse should be exported on BrowserLocalProvider');
+
+  // Test 1: Garbage JSON triggers retry and throws useful error if retry fails
+  const promptsSeenGarbage = [];
+  const garbageGen = async (prompt) => {
+    promptsSeenGarbage.push(prompt);
+    return promptsSeenGarbage.length === 1 ? 'NOT_JSON_GARBAGE' : 'STILL_GARBAGE';
+  };
+
+  await assert.rejects(
+    () => generateAndParse(garbageGen, 'initial prompt', 1),
+    (err) => {
+      assert.ok(err.message.includes('Gemma output was not valid JSON: STILL_GARBAGE'));
+      return true;
+    }
+  );
+  assert.strictEqual(promptsSeenGarbage.length, 2, 'generateAndParse should retry exactly once on bad JSON');
+  assert.ok(promptsSeenGarbage[1].includes('Your previous output was not valid JSON'), 'Retry prompt should contain corrective instruction');
+
+  // Test 2: Truncated JSON triggers retry
+  const promptsSeenTruncated = [];
+  const truncatedGen = async (prompt) => {
+    promptsSeenTruncated.push(prompt);
+    return '{"translated_skill_md": "Truncated string...';
+  };
+
+  await assert.rejects(
+    () => generateAndParse(truncatedGen, 'initial prompt', 1),
+    /Gemma output was not valid JSON/
+  );
+  assert.strictEqual(promptsSeenTruncated.length, 2, 'Truncated JSON should trigger retry');
+
+  // Test 3: Markdown-fenced invalid JSON triggers retry
+  const promptsSeenFenced = [];
+  const fencedGen = async (prompt) => {
+    promptsSeenFenced.push(prompt);
+    return '```json\n{ "translated_skill_md": invalid_value }\n```';
+  };
+
+  await assert.rejects(
+    () => generateAndParse(fencedGen, 'initial prompt', 1),
+    /Gemma output was not valid JSON/
+  );
+  assert.strictEqual(promptsSeenFenced.length, 2, 'Markdown-fenced invalid JSON should trigger retry');
+
+  // Test 4: Successful recovery on retry
+  const promptsSeenRecovery = [];
+  const recoveryGen = async (prompt) => {
+    promptsSeenRecovery.push(prompt);
+    if (promptsSeenRecovery.length === 1) {
+      return '```json\n{ "translated_skill_md": invalid_value }\n```';
+    }
+    return '{"translated_skill_md": "Successfully recovered body text", "changes": []}';
+  };
+
+  const recoveredRes = await generateAndParse(recoveryGen, 'initial prompt', 1);
+  assert.strictEqual(promptsSeenRecovery.length, 2, 'Recovery should take 2 attempts');
+  assert.strictEqual(recoveredRes.translated_skill_md, 'Successfully recovered body text');
+
+  // Test 5: translateWithProvider mid-generation failure fallback to deterministic engine
+  const midGenErrorProvider = {
+    id: 'browser-local',
+    translate: async () => {
+      throw new Error('WebGPU OOM exception mid-generation during model.generate()');
+    }
+  };
+
+  const skill = { instructions: 'Use the Bash tool to inspect files.', description: 'Mid-generation test' };
+  const fallbackRes = await Translator.translateWithProvider({
+    provider: midGenErrorProvider,
+    model: 'gemma-4-e4b-it-webgpu',
+    skill,
+    targetKey: 'geminiSpark'
+  });
+
+  assert.strictEqual(fallbackRes.mode, 'deterministic-fallback');
+  assert.strictEqual(fallbackRes.providerError, 'WebGPU OOM exception mid-generation during model.generate()');
+  assert.ok(fallbackRes.translatedBody.includes('Inspect the repository files available to you'), 'Fallback should output deterministic translation');
 });
 
 test('Credential scanning, platform jargon detection, extractTopics, and path sanitization helper functions', () => {
@@ -984,19 +1115,18 @@ test('Regression: renderManifest preserves unknown frontmatter fields on export'
   assert.strictEqual(exportedFm.name, 'custom-skill');
 });
 
-test('Benchmark Corpus of 50 Representative Skills and Benchmark Runner Suite', () => {
+test('Benchmark Corpus of Real Skills and Benchmark Runner Suite', () => {
   assert.ok(BenchmarkCorpus, 'BenchmarkCorpus module should exist');
-  assert.strictEqual(BenchmarkCorpus.BENCHMARK_SKILLS.length, 50, 'Benchmark corpus must contain 50 representative skills');
+  assert.ok(BenchmarkCorpus.BENCHMARK_SKILLS.length >= 50, 'Benchmark corpus must contain at least 50 real skills');
 
   const categories = new Set(BenchmarkCorpus.BENCHMARK_SKILLS.map(s => s.category));
   assert.ok(categories.has('Claude'), 'Corpus should contain Claude skills');
   assert.ok(categories.has('OpenAI/Codex'), 'Corpus should contain OpenAI skills');
-  assert.ok(categories.has('Script-heavy'), 'Corpus should contain Script-heavy skills');
-  assert.ok(categories.has('Browser-dependent'), 'Corpus should contain Browser-dependent skills');
+  assert.ok(categories.has('Superpowers'), 'Corpus should contain Superpowers skills');
 
   const benchmarkResults = BenchmarkCorpus.runBenchmarkSuite(Validator, Translator, new BrowserLocalProvider());
 
-  assert.strictEqual(benchmarkResults.totalSkills, 50);
+  assert.strictEqual(benchmarkResults.totalSkills, BenchmarkCorpus.BENCHMARK_SKILLS.length);
   assert.ok(benchmarkResults.passedInitialValidation > 20);
   assert.ok(benchmarkResults.passedPostValidation > 20);
   assert.ok(benchmarkResults.averageQualityScore >= 80, `Average quality score should be >= 80 (was ${benchmarkResults.averageQualityScore})`);
