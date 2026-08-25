@@ -68,9 +68,13 @@
   async function loadTransformersRuntime(globalObj) {
     if (globalObj.transformers || globalObj.Transformers) return globalObj.transformers || globalObj.Transformers;
     if (globalObj.__transformersModule) return globalObj.__transformersModule;
-    const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4');
-    globalObj.__transformersModule = mod;
-    return mod;
+    try {
+      const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0');
+      globalObj.__transformersModule = mod;
+      return mod;
+    } catch (e) {
+      return null;
+    }
   }
 
   class BrowserLocalProvider {
@@ -215,14 +219,15 @@
     }
 
     async unloadModel() {
-      if (this.loadedEngine && typeof this.loadedEngine.dispose === 'function') {
-        await this.loadedEngine.dispose();
-      }
-      if (this.loadedPipeline && typeof this.loadedPipeline.dispose === 'function') {
-        await this.loadedPipeline.dispose();
-      }
-      if (this.loadedModel && typeof this.loadedModel.dispose === 'function') {
-        await this.loadedModel.dispose();
+      const items = [this.loadedEngine, this.loadedPipeline, this.loadedModel];
+      for (const item of items) {
+        if (item && typeof item.dispose === 'function') {
+          try {
+            await item.dispose();
+          } catch (e) {
+            console.warn('Error disposing model resource:', e);
+          }
+        }
       }
       this.loadedEngine = null;
       this.loadedPipeline = null;
@@ -233,14 +238,20 @@
     }
 
     buildStructuredPrompt({ skill, analysis, target = 'gemini-spark' }) {
+      const MAX_BODY_CHARS = 8000;
+      let rawInstructions = skill.instructions || skill.body || '';
+      if (rawInstructions.length > MAX_BODY_CHARS) {
+        rawInstructions = rawInstructions.slice(0, MAX_BODY_CHARS) + '\n\n[... truncated for local browser inference ...]';
+      }
+
       const payload = {
         source_platform: (analysis && analysis.gemini && analysis.gemini.sourcePlatform) || 'generic',
         target,
-        detected_capabilities: (analysis && analysis.capabilities) || [],
-        unsupported_capabilities: (analysis && analysis.unsupported) || [],
-        resource_dependencies: (analysis && analysis.resourceGraph && analysis.resourceGraph.references) || [],
-        security_findings: (analysis && analysis.security && analysis.security.blockers) || [],
-        original_skill_md: skill.instructions || skill.body || '',
+        detected_capabilities: ((analysis && analysis.capabilities) || []).slice(0, 20),
+        unsupported_capabilities: ((analysis && analysis.unsupported) || []).slice(0, 20),
+        resource_dependencies: ((analysis && analysis.resourceGraph && analysis.resourceGraph.references) || []).slice(0, 20),
+        security_findings: ((analysis && analysis.security && analysis.security.blockers) || []).slice(0, 20),
+        original_skill_md: rawInstructions,
         description: skill.description || ''
       };
 
@@ -289,7 +300,24 @@ Return ONLY valid JSON with the following exact schema:
         throw new Error(hw.reason);
       }
 
-      const modelMeta = MODELS.find(m => m.id === modelId) || MODELS[0];
+      let targetModelId = modelId;
+      let modelMeta = MODELS.find(m => m.id === targetModelId) || MODELS[0];
+
+      if (hw.status === 'MARGINAL' && hw.recommendedModel && hw.recommendedModel !== targetModelId) {
+        if (modelMeta.requirements && modelMeta.requirements.minVramMB > 2000) {
+          console.warn(`Hardware is marginal or low VRAM/memory. Substituting recommended model ${hw.recommendedModel}.`);
+          targetModelId = hw.recommendedModel;
+          modelMeta = MODELS.find(m => m.id === targetModelId) || MODELS[0];
+        }
+      }
+
+      if (this.currentModelId === targetModelId && (this.loadedModel || this.loadedPipeline)) {
+        return this.loadedPipeline || this.loadedModel;
+      }
+
+      if (this.loadedModel || this.loadedPipeline || this.loadedEngine) {
+        await this.unloadModel();
+      }
 
       this.isModelLoading = true;
       try {
@@ -331,13 +359,16 @@ Return ONLY valid JSON with the following exact schema:
             await this.unloadModel();
           });
 
-          this.currentModelId = modelId;
+          this.currentModelId = targetModelId;
           return this.loadedPipeline || this.loadedModel;
         }
 
         // Fallback for mock/test environments where transformers global is not present
-        this.currentModelId = modelId;
+        this.currentModelId = targetModelId;
         return null;
+      } catch (e) {
+        await this.unloadModel().catch(() => {});
+        throw e;
       } finally {
         this.isModelLoading = false;
       }
@@ -372,7 +403,20 @@ Return ONLY valid JSON with the following exact schema:
               temperature: 0.1,
               abort_signal: signal
             });
-            return await this.loadedProcessor.decode(outputs[0], { skip_special_tokens: true });
+
+            const inputLength = inputs && inputs.input_ids && inputs.input_ids.dims
+              ? inputs.input_ids.dims.at(-1)
+              : (inputs && inputs.input_ids && inputs.input_ids[0] ? inputs.input_ids[0].length : 0);
+
+            let generatedTokens = outputs[0];
+            if (inputLength > 0 && typeof outputs.slice === 'function' && inputs.input_ids && inputs.input_ids.dims) {
+              const sliced = outputs.slice(null, [inputLength, null]);
+              generatedTokens = sliced[0] || sliced;
+            } else if (inputLength > 0 && generatedTokens && typeof generatedTokens.slice === 'function') {
+              generatedTokens = generatedTokens.slice(inputLength);
+            }
+
+            return await this.loadedProcessor.decode(generatedTokens, { skip_special_tokens: true });
           } else if (this.loadedPipeline) {
             const messages = [
               { role: 'system', content: 'You are a Gemma 4 agent skill translator outputting strictly valid JSON.' },
