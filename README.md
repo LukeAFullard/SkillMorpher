@@ -51,7 +51,7 @@
   - `src/validator.js`: Main skill package validator and pipeline auditor.
   - `src/providers/browser-local-provider.js`: Gemma 4 WebGPU model manager and translation provider.
   - `src/translator.js`: Translation engine, prompt builder, diff generator, and quality score estimator.
-  - `src/benchmark-corpus.js`: 30-skill benchmark corpus and test runner suite.
+  - `src/benchmark-corpus.js`: 78-skill real-world benchmark corpus (snapshot from `anthropics/skills`, `openai/skills`, and `obra/superpowers`) and benchmark runner suite.
 - External Dependencies (via CDN):
   - [JSZip (v3.10.1)](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js): Zip archive reading and creation.
   - [js-yaml (v4.1.0)](https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js): YAML frontmatter parsing and dumping.
@@ -75,9 +75,18 @@ python3 -m http.server 8080
 ```
 Then navigate to `http://localhost:8080`.
 
+## Known Limitations
+
+- **Heuristic Security & Credential Scanning**:
+  Security audit tools, secret scanners, and script network analyzers in SkillMorpher are regex-based heuristics designed for lightweight client-side execution in the browser. They do not perform full AST/SAST parsing or dynamic call-graph evaluation. As demonstrated in CI tests (`test/scanner-limitations.test.js`), regex scanning cannot guarantee detection against indirect variable aliasing, string concatenation, base64 encoding, dynamic reflection, or code obfuscation.
+- **Small On-Device AI Model Quality**:
+  Local AI translation relies on small, quantized ONNX edge models (**Gemma 4 E2B** ~1.1B and **Gemma 4 E4B** ~2.2B) executing via WebGPU. While fast and privacy-preserving, local model outputs have not been independently benchmarked or verified against frontier cloud models (e.g. Gemini 1.5 Pro / Flash) for complex multi-turn reasoning.
+- **Experimental Target Status**:
+  Gemini Spark is the primary supported skill target. The **Gemini CLI** target profile is experimental and unverified against live production Gemini CLI runtimes.
+
 ## Testing
 
-Automated integration tests and 30-skill benchmark suite can be run using Node.js:
+Automated integration tests, scanner limitation verification, and 78-skill real-world benchmark suite can be run using Node.js:
 ```bash
 npm test
 ```
