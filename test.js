@@ -1115,7 +1115,7 @@ test('Regression: renderManifest preserves unknown frontmatter fields on export'
   assert.strictEqual(exportedFm.name, 'custom-skill');
 });
 
-test('Benchmark Corpus of Real Skills and Benchmark Runner Suite', () => {
+test('Benchmark Corpus of Real Skills and Benchmark Runner Suite', async () => {
   assert.ok(BenchmarkCorpus, 'BenchmarkCorpus module should exist');
   assert.ok(BenchmarkCorpus.BENCHMARK_SKILLS.length >= 50, 'Benchmark corpus must contain at least 50 real skills');
 
@@ -1124,7 +1124,11 @@ test('Benchmark Corpus of Real Skills and Benchmark Runner Suite', () => {
   assert.ok(categories.has('OpenAI/Codex'), 'Corpus should contain OpenAI skills');
   assert.ok(categories.has('Superpowers'), 'Corpus should contain Superpowers skills');
 
-  const benchmarkResults = BenchmarkCorpus.runBenchmarkSuite(Validator, Translator, new BrowserLocalProvider());
+  const loadedSkills = await BenchmarkCorpus.ensureCorpusLoaded();
+  assert.strictEqual(loadedSkills.length, BenchmarkCorpus.BENCHMARK_SKILLS.length);
+  assert.ok(loadedSkills[0].instructions.length > 0, 'Loaded skill instructions should not be empty');
+
+  const benchmarkResults = await BenchmarkCorpus.runBenchmarkSuite(Validator, Translator, new BrowserLocalProvider());
 
   assert.strictEqual(benchmarkResults.totalSkills, BenchmarkCorpus.BENCHMARK_SKILLS.length);
   assert.ok(benchmarkResults.passedInitialValidation > 20);

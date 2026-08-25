@@ -97,12 +97,16 @@ async function refreshRealSkills() {
         expectedNeedsTranslation = true;
       }
 
+      const relFixturePath = `test/fixtures/real-skills/${item.shortName}/${fixtureFilename}`;
+
       benchmarkSkills.push({
         id: skillId++,
         repo: `${item.owner}/${item.repo}`,
+        path: file.path,
         category: item.defaultCategory,
         name: finalName,
         description: finalDesc,
+        fixturePath: relFixturePath,
         instructions: parsed.instructions.trim(),
         files: [],
         expectedPlatform,
@@ -111,7 +115,27 @@ async function refreshRealSkills() {
     }
   }
 
+  // Disambiguate any duplicate skill names in the corpus by appending folder context
+  const nameCounts = {};
+  benchmarkSkills.forEach(s => {
+    nameCounts[s.name] = (nameCounts[s.name] || 0) + 1;
+  });
+  benchmarkSkills.forEach(s => {
+    if (nameCounts[s.name] > 1 && s.path) {
+      const folderPath = s.path.replace(/\/?SKILL\.md$/i, '');
+      if (folderPath) {
+        s.name = `${s.name} (${folderPath})`;
+      }
+    }
+  });
+
   console.log(`Fetched and vendored ${benchmarkSkills.length} skills into test/fixtures/real-skills/`);
+
+  // Create lightweight metadata array (omit instructions text from exported JS file)
+  const benchmarkSkillsMetadata = benchmarkSkills.map(s => {
+    const { instructions, path: filePath, ...meta } = s;
+    return meta;
+  });
 
   // Regenerate src/benchmark-corpus.js
   const corpusContent = `(function (root, factory) {
@@ -126,9 +150,74 @@ async function refreshRealSkills() {
   'use strict';
 
   // Benchmark corpus loaded from real skills vendored snapshot (anthropics/skills, openai/skills, obra/superpowers)
-  const BENCHMARK_SKILLS = ${JSON.stringify(benchmarkSkills, null, 2)};
+  const BENCHMARK_SKILLS = ${JSON.stringify(benchmarkSkillsMetadata, null, 2)};
 
-  function runBenchmarkSuite(validator, translator, provider) {
+  function getSkillInstructions(item) {
+    if (item._instructions) return item._instructions;
+    if (typeof process !== 'undefined' && process.versions && process.versions.node && item.fixturePath) {
+      try {
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const fullPath = path.join(__dirname, '..', item.fixturePath);
+        const content = fs.readFileSync(fullPath, 'utf8');
+        const fmMatch = content.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---\\r?\\n([\\s\\S]*)$/);
+        item._instructions = fmMatch ? fmMatch[2].trim() : content.trim();
+        return item._instructions;
+      } catch (e) {
+        // Fallback to empty string if file read fails
+      }
+    }
+    return item._instructions || '';
+  }
+
+  async function ensureCorpusLoaded() {
+    if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+      BENCHMARK_SKILLS.forEach(item => getSkillInstructions(item));
+      return BENCHMARK_SKILLS;
+    }
+    const promises = BENCHMARK_SKILLS.map(async item => {
+      if (item._instructions) return item._instructions;
+      let content = null;
+      if (item.fixturePath) {
+        try {
+          const res = await fetch(item.fixturePath);
+          if (res.ok) content = await res.text();
+        } catch (e) { /* ignore and try fallback */ }
+      }
+      if (!content && item.repo && item.path) {
+        try {
+          const rawUrl = 'https://raw.githubusercontent.com/' + item.repo + '/main/' + item.path;
+          const res = await fetch(rawUrl);
+          if (res.ok) content = await res.text();
+        } catch (e) { /* ignore */ }
+      }
+      if (content) {
+        const fmMatch = content.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---\\r?\\n([\\s\\S]*)$/);
+        item._instructions = fmMatch ? fmMatch[2].trim() : content.trim();
+      } else {
+        item._instructions = item._instructions || '';
+      }
+      return item._instructions;
+    });
+    await Promise.all(promises);
+    return BENCHMARK_SKILLS;
+  }
+
+  BENCHMARK_SKILLS.forEach(item => {
+    Object.defineProperty(item, 'instructions', {
+      get() {
+        return getSkillInstructions(item);
+      },
+      set(val) {
+        item._instructions = val;
+      },
+      configurable: true,
+      enumerable: true
+    });
+  });
+
+  async function runBenchmarkSuite(validator, translator, provider) {
+    await ensureCorpusLoaded();
     const results = {
       totalSkills: BENCHMARK_SKILLS.length,
       passedInitialValidation: 0,
@@ -203,7 +292,8 @@ async function refreshRealSkills() {
 
   return {
     BENCHMARK_SKILLS,
-    runBenchmarkSuite
+    runBenchmarkSuite,
+    ensureCorpusLoaded
   };
 }));
 `;
