@@ -791,7 +791,7 @@ test('renderManifest and body credential scanning state/UI behavior', () => {
 
   const mockScript = jsCode
     .replace(/await /g, '')
-    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.renderManifest = renderManifest;\n  globalThis.state = state;\n  refreshRateLimit();\n})();');
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.renderManifest = renderManifest;\n  globalThis.state = state;\n})();');
 
   const evalContext = new Function('document', 'window', 'globalThis', `
     ${mockScript}
@@ -908,7 +908,7 @@ test('Security: Frontmatter schema validation', () => {
 
   const mockScript = jsCode
     .replace(/await /g, '')
-    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.parseSkillMd = parseSkillMd;\n  refreshRateLimit();\n})();');
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.parseSkillMd = parseSkillMd;\n})();');
 
   const fnEvaluator = new Function('document', 'jsyaml', `
     ${mockScript}
@@ -960,7 +960,7 @@ test('Security: Network detection across Python and JS patterns', () => {
 
   const mockScript = jsCode
     .replace(/await /g, '')
-    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.scanForNetworkCalls = scanForNetworkCalls;\n  refreshRateLimit();\n})();');
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.scanForNetworkCalls = scanForNetworkCalls;\n})();');
 
   const fnEvaluator = new Function('document', mockScript + '\nreturn { scanForNetworkCalls: globalThis.scanForNetworkCalls };');
 
@@ -992,7 +992,7 @@ test('Security & Limits: Package size calculation and limit enforcement', () => 
 
   const mockScript = jsCode
     .replace(/await /g, '')
-    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.calculatePackageSize = calculatePackageSize;\n  globalThis.MAX_TOTAL_UNCOMPRESSED_SIZE = MAX_TOTAL_UNCOMPRESSED_SIZE;\n  refreshRateLimit();\n})();');
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.calculatePackageSize = calculatePackageSize;\n  globalThis.MAX_TOTAL_UNCOMPRESSED_SIZE = MAX_TOTAL_UNCOMPRESSED_SIZE;\n})();');
 
   const fnEvaluator = new Function('document', `
     ${mockScript}
@@ -1168,7 +1168,7 @@ test('Regression: fetchSkillFiles marks 404/failed fetch as blocked', async () =
   assert.ok(scriptMatch, '<script> block should exist');
 
   const jsCode = scriptMatch[1];
-  const mockScript = jsCode.replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.fetchSkillFiles = fetchSkillFiles;\n  refreshRateLimit();\n})();');
+  const mockScript = jsCode.replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.fetchSkillFiles = fetchSkillFiles;\n})();');
 
   const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
   const fnEvaluator = new AsyncFunction('document', 'fetch', 'jsyaml', `
@@ -1243,7 +1243,7 @@ test('Regression: renderManifest preserves unknown frontmatter fields on export'
 
   const mockScript = jsCode
     .replace(/await /g, '')
-    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.renderManifest = renderManifest;\n  globalThis.calculatePackageSize = calculatePackageSize;\n  globalThis.state = state;\n  refreshRateLimit();\n})();');
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.renderManifest = renderManifest;\n  globalThis.calculatePackageSize = calculatePackageSize;\n  globalThis.state = state;\n})();');
 
   const evalContext = new Function('document', 'window', 'globalThis', 'jsyaml', `
     ${mockScript}
@@ -1383,4 +1383,108 @@ test('Benchmark Corpus browser ensureCorpusLoaded() primary fetch and GitHub raw
     });
     await BenchmarkCorpus.ensureCorpusLoaded();
   }
+});
+
+test('renderManifest and clearBtn unload localProviderInstance and reset translation UI state', async () => {
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch);
+  const jsCode = scriptMatch[1];
+
+  const mockScript = jsCode
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.renderManifest = renderManifest;\n  globalThis.state = state;\n  globalThis.getLocalProviderInstance = () => localProviderInstance;\n  globalThis.setLocalProviderInstance = (inst) => { localProviderInstance = inst; };\n})();');
+
+  const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  const evalContext = new AsyncFunction('document', 'window', 'globalThis', 'jsyaml', 'fetch', `
+    ${mockScript}
+    return {
+      renderManifest: globalThis.renderManifest,
+      state: globalThis.state,
+      getLocalProviderInstance: globalThis.getLocalProviderInstance,
+      setLocalProviderInstance: globalThis.setLocalProviderInstance
+    };
+  `);
+
+  const createMockEl = (id = '') => {
+    const el = {
+      id,
+      style: {},
+      classList: {
+        add: function(c) { el.classes.add(c); },
+        remove: function(c) { el.classes.delete(c); }
+      },
+      classes: new Set(),
+      children: [],
+      _innerHTML: '',
+      get innerHTML() { return this._innerHTML; },
+      set innerHTML(val) { this._innerHTML = val; },
+      value: '',
+      _textContent: '',
+      get textContent() { return this._textContent; },
+      set textContent(val) { this._textContent = val; },
+      checked: false,
+      listeners: {},
+      addEventListener: function(evt, fn) { el.listeners[evt] = fn; },
+      scrollIntoView: () => {},
+      appendChild: function(child) { el.children.push(child); }
+    };
+    return el;
+  };
+
+  const elements = {};
+  const mockDoc = {
+    getElementById: (id) => {
+      if (!elements[id]) {
+        elements[id] = createMockEl(id);
+      }
+      return elements[id];
+    },
+    querySelectorAll: () => [],
+    createElement: (tag) => createMockEl()
+  };
+
+  const mockJsyaml = {
+    dump: (obj) => JSON.stringify(obj)
+  };
+
+  const mockFetch = async () => ({ ok: false });
+  const { renderManifest, state, setLocalProviderInstance } = await evalContext(mockDoc, {}, globalThis, mockJsyaml, mockFetch);
+
+  let unloadCount = 0;
+  const mockProvider = {
+    unloadModel: async () => { unloadCount++; return true; }
+  };
+  setLocalProviderInstance(mockProvider);
+
+  // Set up mock DOM elements with stale translation UI state
+  mockDoc.getElementById('translationSummary').textContent = 'Stale summary text';
+  mockDoc.getElementById('qualityScoreCard').style.display = 'block';
+  mockDoc.getElementById('diffContainer').style.display = 'block';
+  mockDoc.getElementById('diffTbody').innerHTML = '<tr><td>1</td></tr>';
+
+  // Call renderManifest to simulate skill switch
+  await renderManifest('source A', { name: 'skill-a' }, 'Instructions A', []);
+
+  assert.strictEqual(unloadCount, 1, 'renderManifest should unload localProviderInstance');
+  assert.strictEqual(mockDoc.getElementById('translationSummary').textContent, '', 'translationSummary should be cleared');
+  assert.strictEqual(mockDoc.getElementById('qualityScoreCard').style.display, 'none', 'qualityScoreCard should be hidden');
+  assert.strictEqual(mockDoc.getElementById('diffContainer').style.display, 'none', 'diffContainer should be hidden');
+  assert.strictEqual(mockDoc.getElementById('diffTbody').innerHTML, '', 'diffTbody should be cleared');
+
+  // Set stale translation state again and test clearBtn handler
+  mockDoc.getElementById('translationSummary').textContent = 'Another summary text';
+  mockDoc.getElementById('qualityScoreCard').style.display = 'block';
+  mockDoc.getElementById('diffContainer').style.display = 'block';
+  mockDoc.getElementById('diffTbody').innerHTML = '<tr><td>2</td></tr>';
+
+  const clearHandler = mockDoc.getElementById('clearBtn').listeners['click'];
+  assert.ok(clearHandler, 'clearBtn click handler should be registered');
+  await clearHandler();
+
+  assert.strictEqual(unloadCount, 2, 'clearBtn handler should unload localProviderInstance');
+  assert.strictEqual(state.currentSkill, null);
+  assert.strictEqual(mockDoc.getElementById('translationSummary').textContent, '');
+  assert.strictEqual(mockDoc.getElementById('qualityScoreCard').style.display, 'none');
+  assert.strictEqual(mockDoc.getElementById('diffContainer').style.display, 'none');
+  assert.strictEqual(mockDoc.getElementById('diffTbody').innerHTML, '');
 });

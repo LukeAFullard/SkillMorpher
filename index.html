@@ -864,7 +864,19 @@
     });
   }
 
-  function renderManifest(sourceLabel, frontmatter, body, files){
+  async function renderManifest(sourceLabel, frontmatter, body, files){
+    if (localProviderInstance) {
+      await localProviderInstance.unloadModel();
+    }
+
+    el('translationSummary').textContent = '';
+    const qsCard = el('qualityScoreCard');
+    if (qsCard) qsCard.style.display = 'none';
+    const diffContainer = el('diffContainer');
+    if (diffContainer) diffContainer.style.display = 'none';
+    const diffTbody = el('diffTbody');
+    if (diffTbody) diffTbody.innerHTML = '';
+
     const name = (frontmatter && typeof frontmatter.name === 'string') ? frontmatter.name : '';
     const desc = (frontmatter && typeof frontmatter.description === 'string') ? frontmatter.description : '';
     const fixedName = toKebabCase(name);
@@ -992,10 +1004,10 @@
   }
 
   // ---------- translation logic ----------
-  el('targetProfileSelect').addEventListener('change', (e) => {
+  el('targetProfileSelect').addEventListener('change', async (e) => {
     state.targetProfile = e.target.value;
     if (state.currentSkill) {
-      renderManifest(state.currentSkill.sourceLabel, { name: state.currentSkill.name, description: state.currentSkill.description }, state.currentSkill.instructions, state.currentSkill.files);
+      await renderManifest(state.currentSkill.sourceLabel, { name: state.currentSkill.name, description: state.currentSkill.description }, state.currentSkill.instructions, state.currentSkill.files);
     }
   });
 
@@ -1429,7 +1441,7 @@ if (typeof window !== 'undefined') {
       const raw = await res.text();
       const { frontmatter, body } = parseSkillMd(raw);
       const files = await fetchSkillFiles(state.owner, state.repo, state.branch, state.tree, skillMdPath);
-      renderManifest(state.owner + '/' + state.repo + ' — ' + skillMdPath, frontmatter, body, files);
+      await renderManifest(state.owner + '/' + state.repo + ' — ' + skillMdPath, frontmatter, body, files);
       setRepoStatus('Loaded ' + folderName + '.', false);
     } catch(err){
       setRepoStatus(err.message, true);
@@ -1442,12 +1454,12 @@ if (typeof window !== 'undefined') {
     n.textContent = msg;
     n.className = 'status-msg' + (isErr ? ' err' : msg ? ' ok' : '');
   }
-  el('parsePasteBtn').addEventListener('click', () => {
+  el('parsePasteBtn').addEventListener('click', async () => {
     const raw = el('pasteArea').value;
     if (!raw.trim()){ setDirectStatus('Paste a SKILL.md first.', true); return; }
     try{
       const { frontmatter, body } = parseSkillMd(raw);
-      renderManifest('pasted SKILL.md', frontmatter, body, []);
+      await renderManifest('pasted SKILL.md', frontmatter, body, []);
       setDirectStatus('Parsed.', false);
     } catch(err){
       setDirectStatus(err.message, true);
@@ -1568,12 +1580,12 @@ if (typeof window !== 'undefined') {
 
           files.push({ path: cleanPath, content: text, status, reason });
         }
-        renderManifest('uploaded zip: ' + file.name, frontmatter, body, files);
+        await renderManifest('uploaded zip: ' + file.name, frontmatter, body, files);
         setDirectStatus('Parsed ' + file.name + '.', false);
       } else {
         const raw = await file.text();
         const { frontmatter, body } = parseSkillMd(raw);
-        renderManifest('uploaded file: ' + file.name, frontmatter, body, []);
+        await renderManifest('uploaded file: ' + file.name, frontmatter, body, []);
         setDirectStatus('Parsed ' + file.name + '.', false);
       }
     } catch(err){
@@ -1601,11 +1613,21 @@ if (typeof window !== 'undefined') {
     }
   });
 
-  el('clearBtn').addEventListener('click', () => {
+  el('clearBtn').addEventListener('click', async () => {
+    if (localProviderInstance) {
+      await localProviderInstance.unloadModel();
+    }
     state.currentSkill = null;
     el('manifestCard').style.display = 'none';
     el('downloadStatus').style.display = 'none';
     el('includeBlockedCheckbox').checked = false;
+    el('translationSummary').textContent = '';
+    const qsCard = el('qualityScoreCard');
+    if (qsCard) qsCard.style.display = 'none';
+    const diffContainer = el('diffContainer');
+    if (diffContainer) diffContainer.style.display = 'none';
+    const diffTbody = el('diffTbody');
+    if (diffTbody) diffTbody.innerHTML = '';
     document.querySelectorAll('.stamp-seal').forEach(n => n.remove());
   });
 
