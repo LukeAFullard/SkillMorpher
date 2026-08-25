@@ -1060,6 +1060,7 @@
 
   el('downloadModelBtn').addEventListener('click', async () => {
     const statusEl = el('modelTestStatus');
+    const downloadBtn = el('downloadModelBtn');
     const modelId = el('localModelSelect').value;
     if (!localProviderInstance) return;
 
@@ -1068,7 +1069,10 @@
     const isCached = await localProviderInstance.checkCache(modelId);
 
     if (!isCached && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      const confirmed = window.confirm(`Model ${spec ? spec.name : modelId} requires downloading ~${spec ? spec.size : '1-2 GB'} over the network. Once downloaded, inference runs 100% locally in your browser. Do you want to proceed with downloading?`);
+      const vramNote = modelId === 'gemma-4-e4b-it-webgpu'
+        ? '\n\nNote: This model needs ~3GB of free GPU memory. If you are unsure of your GPU VRAM, choose E2B instead.'
+        : '';
+      const confirmed = window.confirm(`Model ${spec ? spec.name : modelId} requires downloading ~${spec ? spec.size : '1-2 GB'} over the network and requires sufficient GPU memory (VRAM). Once downloaded, inference runs 100% locally in your browser.${vramNote}\n\nDo you want to proceed with downloading?`);
       if (!confirmed) {
         statusEl.textContent = 'Download cancelled by user.';
         statusEl.className = 'status-msg';
@@ -1076,6 +1080,7 @@
       }
     }
 
+    downloadBtn.disabled = true;
     statusEl.textContent = `Initializing and loading ${modelId}…`;
     statusEl.className = 'status-msg';
 
@@ -1096,6 +1101,8 @@
     } catch (err) {
       statusEl.textContent = `✕ Download or initialization failed: ${err.message}`;
       statusEl.className = 'status-msg err';
+    } finally {
+      downloadBtn.disabled = false;
     }
   });
 

@@ -18,7 +18,7 @@
       size: '1.1 GB',
       sizeBytes: 1.1 * 1024 * 1024 * 1024,
       context: '128K',
-      recommended: false,
+      recommended: true,
       tier: 'fast',
       requirements: { webgpu: true, minVramMB: 1536 }
     },
@@ -30,7 +30,7 @@
       size: '2.2 GB',
       sizeBytes: 2.2 * 1024 * 1024 * 1024,
       context: '128K',
-      recommended: true,
+      recommended: false,
       tier: 'balanced',
       requirements: { webgpu: true, minVramMB: 3072 }
     }
@@ -68,13 +68,18 @@
   async function loadTransformersRuntime(globalObj) {
     if (globalObj.transformers || globalObj.Transformers) return globalObj.transformers || globalObj.Transformers;
     if (globalObj.__transformersModule) return globalObj.__transformersModule;
-    try {
-      const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0');
-      globalObj.__transformersModule = mod;
-      return mod;
-    } catch (e) {
-      return null;
+    if (typeof window === 'undefined') {
+      try {
+        const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0');
+        globalObj.__transformersModule = mod;
+        return mod;
+      } catch (e) {
+        return null;
+      }
     }
+    const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0');
+    globalObj.__transformersModule = mod;
+    return mod;
   }
 
   class BrowserLocalProvider {
@@ -138,16 +143,44 @@
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
         const devMem = (typeof navigator !== 'undefined' && navigator.deviceMemory) ? navigator.deviceMemory : null;
         const lowMemory = devMem && devMem < 4;
-        const recommendedModel = (isLowPower || isMobile || lowMemory) ? 'gemma-4-e2b-it-webgpu' : 'gemma-4-e4b-it-webgpu';
+
+        // Inspect WebGPU adapter buffer limits as a real hardware signal for available GPU memory
+        const limits = adapter.limits || {};
+        const maxBuffer = limits.maxBufferSize || 0;
+        const maxStorageBinding = limits.maxStorageBufferBindingSize || 0;
+        // High-capacity discrete GPUs with ample VRAM typically expose maxBufferSize >= 1GB (1073741824 bytes)
+        // and maxStorageBufferBindingSize >= 1GB.
+        const hasAmpleVramLimits = maxBuffer >= 1073741824 && maxStorageBinding >= 1073741824;
+        const hasAmpleRam = devMem ? devMem >= 8 : true;
+
+        let recommendedModel = 'gemma-4-e2b-it-webgpu'; // Conservative default
+        if (hasAmpleVramLimits && hasAmpleRam && !isLowPower && !isMobile && !lowMemory) {
+          recommendedModel = 'gemma-4-e4b-it-webgpu';
+        }
+
+        const status = isLowPower || lowMemory ? 'MARGINAL' : 'SUPPORTED';
+        const reason = isLowPower
+          ? 'WebGPU running on software/fallback adapter. Gemma 4 E2B recommended.'
+          : isMobile
+            ? 'Mobile device detected. Gemma 4 E2B recommended for battery & VRAM efficiency.'
+            : lowMemory
+              ? 'Low system RAM detected. Gemma 4 E2B recommended.'
+              : recommendedModel === 'gemma-4-e4b-it-webgpu'
+                ? 'High-performance WebGPU hardware with ample VRAM buffer limits detected. Gemma 4 E4B recommended.'
+                : 'WebGPU hardware acceleration available. Gemma 4 E2B recommended for stability (conservative default).';
 
         return {
           supported: true,
-          status: isLowPower || lowMemory ? 'MARGINAL' : 'SUPPORTED',
+          status,
           adapterInfo: adapter.info || null,
+          adapterLimits: {
+            maxBufferSize: maxBuffer,
+            maxStorageBufferBindingSize: maxStorageBinding
+          },
           recommendedModel,
           deviceMemoryGB: devMem,
           memoryWarning: lowMemory ? 'System memory is low (< 4 GB). E2B recommended to prevent OOM errors.' : null,
-          reason: isLowPower ? 'WebGPU running on software/fallback adapter. Gemma 4 E2B recommended.' : (isMobile ? 'Mobile device detected. Gemma 4 E2B recommended for battery & VRAM efficiency.' : (lowMemory ? 'Low system RAM detected. Gemma 4 E2B recommended.' : 'WebGPU hardware acceleration available. Gemma 4 E4B recommended.'))
+          reason
         };
       } catch (err) {
         return {
