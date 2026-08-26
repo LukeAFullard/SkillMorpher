@@ -59,6 +59,7 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'translationSummary',
     'diffContainer',
     'providerSelect',
+    'loadTimeoutInput',
     'generateTimeoutInput',
     'gpuStatusBadge',
     'localModelBox',
@@ -1612,10 +1613,15 @@ test('renderManifest and clearBtn unload localProviderInstance and reset transla
   assert.strictEqual(mockDoc.getElementById('diffTbody').innerHTML, '');
 });
 
-test('BrowserLocalProvider generateTimeoutMs default and UI clamping wiring', async () => {
+test('BrowserLocalProvider loadTimeoutMs and generateTimeoutMs defaults, options, and UI clamping wiring', async () => {
   const provider = new BrowserLocalProvider();
+  assert.strictEqual(provider.loadTimeoutMs, undefined);
   assert.strictEqual(provider.generateTimeoutMs, undefined);
   assert.strictEqual(provider.generateTimeoutMs || 120 * 1000, 120000);
+
+  const providerWithOpts = new BrowserLocalProvider({ loadTimeoutMs: 600000, generateTimeoutMs: 180000 });
+  assert.strictEqual(providerWithOpts.loadTimeoutMs, 600000);
+  assert.strictEqual(providerWithOpts.generateTimeoutMs, 180000);
 
   const html = fs.readFileSync('index.html', 'utf8');
   const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
@@ -1673,7 +1679,8 @@ test('BrowserLocalProvider generateTimeoutMs default and UI clamping wiring', as
     createElement: (tag) => createMockEl()
   };
 
-  const { state, setLocalProviderInstance } = await evalContext(mockDoc, { Translator }, globalThis, {}, async () => ({ ok: false }));
+  globalThis.BrowserLocalProvider = BrowserLocalProvider;
+  const { state, setLocalProviderInstance } = await evalContext(mockDoc, { Translator, BrowserLocalProvider }, globalThis, {}, async () => ({ ok: false }));
 
   const testProvider = new BrowserLocalProvider();
   setLocalProviderInstance(testProvider);
@@ -1706,4 +1713,31 @@ test('BrowserLocalProvider generateTimeoutMs default and UI clamping wiring', as
   await translateHandler();
   assert.strictEqual(testProvider.generateTimeoutMs, 150000);
   assert.strictEqual(mockDoc.getElementById('generateTimeoutInput').value, 150);
+
+  // Test loadTimeoutInput via translateBtn click handler
+  // Test 5: Value below min (10s -> clamped to 60s = 60000ms)
+  mockDoc.getElementById('loadTimeoutInput').value = '10';
+  await translateHandler();
+  assert.strictEqual(testProvider.loadTimeoutMs, 60000);
+  assert.strictEqual(mockDoc.getElementById('loadTimeoutInput').value, 60);
+
+  // Test 6: Value above max (5000s -> clamped to 3600s = 3600000ms)
+  mockDoc.getElementById('loadTimeoutInput').value = '5000';
+  await translateHandler();
+  assert.strictEqual(testProvider.loadTimeoutMs, 3600000);
+  assert.strictEqual(mockDoc.getElementById('loadTimeoutInput').value, 3600);
+
+  // Test 7: NaN or invalid value -> default 300s = 300000ms
+  mockDoc.getElementById('loadTimeoutInput').value = 'invalid';
+  await translateHandler();
+  assert.strictEqual(testProvider.loadTimeoutMs, 300000);
+  assert.strictEqual(mockDoc.getElementById('loadTimeoutInput').value, 300);
+
+  // Test 8: Normal value (600s -> 600000ms) via downloadModelBtn
+  const downloadHandler = mockDoc.getElementById('downloadModelBtn').listeners['click'];
+  assert.ok(downloadHandler, 'downloadModelBtn click handler should be registered');
+  mockDoc.getElementById('loadTimeoutInput').value = '600';
+  await downloadHandler();
+  assert.strictEqual(testProvider.loadTimeoutMs, 600000);
+  assert.strictEqual(mockDoc.getElementById('loadTimeoutInput').value, 600);
 });

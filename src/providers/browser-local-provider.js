@@ -138,12 +138,18 @@
   }
 
   class BrowserLocalProvider {
-    constructor() {
+    constructor(options = {}) {
       this.id = 'browser-local';
       this.name = 'Browser Local Model (Gemma 4 LiteRT-LM)';
       this.loadedEngine = null;
       this.currentModelId = null;
       this.isModelLoading = false;
+      if (options && options.loadTimeoutMs) {
+        this.loadTimeoutMs = options.loadTimeoutMs;
+      }
+      if (options && options.generateTimeoutMs) {
+        this.generateTimeoutMs = options.generateTimeoutMs;
+      }
     }
 
     static getModels() {
@@ -447,10 +453,12 @@ Return ONLY valid JSON with the following exact schema:
 }`;
     }
 
-    async loadModel(modelId, progressCallback) {
+    async loadModel(modelId, progressCallback, options = {}) {
       if (this.isModelLoading) {
         throw new Error('Another model is currently downloading or initializing. Please wait.');
       }
+
+      const effectiveLoadTimeout = (typeof options === 'number' ? options : (options && options.loadTimeoutMs)) || this.loadTimeoutMs || 5 * 60 * 1000;
 
       const hw = await this.checkHardwareSupport();
       if (!hw.supported) {
@@ -498,7 +506,7 @@ Return ONLY valid JSON with the following exact schema:
             }
             const engine = await litert.Engine.create({ model: modelInput });
             this.loadedEngine = engine;
-          }, this.loadTimeoutMs || 5 * 60 * 1000, 'Model download & initialization', async () => {
+          }, effectiveLoadTimeout, 'Model download & initialization', async () => {
             await this.unloadModel();
           });
 

@@ -333,9 +333,15 @@
       <span id="gpuStatusBadge" class="stamp-tag warn">Checking WebGPU...</span>
     </div>
 
-    <div class="row" style="margin-bottom:10px;">
-      <label class="small" for="generateTimeoutInput" style="margin:0;">Generation timeout (seconds)</label>
-      <input type="number" id="generateTimeoutInput" min="30" max="600" step="10" value="120" style="width:80px; flex:none; min-width:0;" />
+    <div class="row" style="margin-bottom:10px; gap:16px; flex-wrap:wrap;">
+      <div class="row" style="gap:6px; flex:none;">
+        <label class="small" for="loadTimeoutInput" style="margin:0;">Download timeout (seconds)</label>
+        <input type="number" id="loadTimeoutInput" min="60" max="3600" step="30" value="300" style="width:80px; flex:none; min-width:0;" />
+      </div>
+      <div class="row" style="gap:6px; flex:none;">
+        <label class="small" for="generateTimeoutInput" style="margin:0;">Generation timeout (seconds)</label>
+        <input type="number" id="generateTimeoutInput" min="30" max="600" step="10" value="120" style="width:80px; flex:none; min-width:0;" />
+      </div>
     </div>
 
     <div id="localModelBox">
@@ -1092,6 +1098,11 @@
     const modelId = el('localModelSelect').value;
     if (!localProviderInstance) return;
 
+    const rawLoad = parseInt(el('loadTimeoutInput').value, 10);
+    const clampedLoad = Math.min(3600, Math.max(60, isNaN(rawLoad) ? 300 : rawLoad));
+    localProviderInstance.loadTimeoutMs = clampedLoad * 1000;
+    el('loadTimeoutInput').value = clampedLoad;
+
     const models = BrowserLocalProvider.getModels();
     const spec = models.find(m => m.id === modelId);
     const isCached = await localProviderInstance.checkCache(modelId);
@@ -1159,10 +1170,15 @@
 
   el('translateBtn').addEventListener('click', async () => {
     if (localProviderInstance) {
-      const raw = parseInt(el('generateTimeoutInput').value, 10);
-      const clamped = Math.min(600, Math.max(30, isNaN(raw) ? 120 : raw));
-      localProviderInstance.generateTimeoutMs = clamped * 1000;
-      el('generateTimeoutInput').value = clamped;
+      const rawLoad = parseInt(el('loadTimeoutInput').value, 10);
+      const clampedLoad = Math.min(3600, Math.max(60, isNaN(rawLoad) ? 300 : rawLoad));
+      localProviderInstance.loadTimeoutMs = clampedLoad * 1000;
+      el('loadTimeoutInput').value = clampedLoad;
+
+      const rawGen = parseInt(el('generateTimeoutInput').value, 10);
+      const clampedGen = Math.min(600, Math.max(30, isNaN(rawGen) ? 120 : rawGen));
+      localProviderInstance.generateTimeoutMs = clampedGen * 1000;
+      el('generateTimeoutInput').value = clampedGen;
     }
 
     if (!state.currentSkill || typeof Translator === 'undefined') return;
