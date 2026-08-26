@@ -59,6 +59,7 @@ test('index.html contains expected DOM element IDs and script logic', () => {
     'translationSummary',
     'diffContainer',
     'providerSelect',
+    'generateTimeoutInput',
     'gpuStatusBadge',
     'localModelBox',
     'localModelSelect',
@@ -1609,4 +1610,100 @@ test('renderManifest and clearBtn unload localProviderInstance and reset transla
   assert.strictEqual(mockDoc.getElementById('qualityScoreCard').style.display, 'none');
   assert.strictEqual(mockDoc.getElementById('diffContainer').style.display, 'none');
   assert.strictEqual(mockDoc.getElementById('diffTbody').innerHTML, '');
+});
+
+test('BrowserLocalProvider generateTimeoutMs default and UI clamping wiring', async () => {
+  const provider = new BrowserLocalProvider();
+  assert.strictEqual(provider.generateTimeoutMs, undefined);
+  assert.strictEqual(provider.generateTimeoutMs || 120 * 1000, 120000);
+
+  const html = fs.readFileSync('index.html', 'utf8');
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch);
+  const jsCode = scriptMatch[1];
+
+  const mockScript = jsCode
+    .replace(/refreshRateLimit\(\);\s*\}\)\(\);/, 'globalThis.state = state;\n  globalThis.getLocalProviderInstance = () => localProviderInstance;\n  globalThis.setLocalProviderInstance = (inst) => { localProviderInstance = inst; };\n})();');
+
+  const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  const evalContext = new AsyncFunction('document', 'window', 'globalThis', 'jsyaml', 'fetch', `
+    ${mockScript}
+    return {
+      state: globalThis.state,
+      getLocalProviderInstance: globalThis.getLocalProviderInstance,
+      setLocalProviderInstance: globalThis.setLocalProviderInstance
+    };
+  `);
+
+  const createMockEl = (id = '') => {
+    const el = {
+      id,
+      style: {},
+      classList: {
+        add: function(c) { el.classes.add(c); },
+        remove: function(c) { el.classes.delete(c); }
+      },
+      classes: new Set(),
+      children: [],
+      _innerHTML: '',
+      get innerHTML() { return this._innerHTML; },
+      set innerHTML(val) { this._innerHTML = val; },
+      value: '',
+      _textContent: '',
+      get textContent() { return this._textContent; },
+      set textContent(val) { this._textContent = val; },
+      checked: false,
+      listeners: {},
+      addEventListener: function(evt, fn) { el.listeners[evt] = fn; },
+      scrollIntoView: () => {},
+      appendChild: function(child) { el.children.push(child); }
+    };
+    return el;
+  };
+
+  const elements = {};
+  const mockDoc = {
+    getElementById: (id) => {
+      if (!elements[id]) {
+        elements[id] = createMockEl(id);
+      }
+      return elements[id];
+    },
+    querySelectorAll: () => [],
+    createElement: (tag) => createMockEl()
+  };
+
+  const { state, setLocalProviderInstance } = await evalContext(mockDoc, { Translator }, globalThis, {}, async () => ({ ok: false }));
+
+  const testProvider = new BrowserLocalProvider();
+  setLocalProviderInstance(testProvider);
+
+  state.currentSkill = { instructions: 'Clean text', description: 'Test', sourceLabel: 'test', files: [] };
+
+  const translateHandler = mockDoc.getElementById('translateBtn').listeners['click'];
+  assert.ok(translateHandler, 'translateBtn click handler should be registered');
+
+  // Test 1: Value below min (10s -> clamped to 30s = 30000ms)
+  mockDoc.getElementById('generateTimeoutInput').value = '10';
+  await translateHandler();
+  assert.strictEqual(testProvider.generateTimeoutMs, 30000);
+  assert.strictEqual(mockDoc.getElementById('generateTimeoutInput').value, 30);
+
+  // Test 2: Value above max (1000s -> clamped to 600s = 600000ms)
+  mockDoc.getElementById('generateTimeoutInput').value = '1000';
+  await translateHandler();
+  assert.strictEqual(testProvider.generateTimeoutMs, 600000);
+  assert.strictEqual(mockDoc.getElementById('generateTimeoutInput').value, 600);
+
+  // Test 3: NaN or invalid value -> default 120s = 120000ms
+  mockDoc.getElementById('generateTimeoutInput').value = 'invalid';
+  await translateHandler();
+  assert.strictEqual(testProvider.generateTimeoutMs, 120000);
+  assert.strictEqual(mockDoc.getElementById('generateTimeoutInput').value, 120);
+
+  // Test 4: Normal in-range value (150s -> 150000ms)
+  mockDoc.getElementById('generateTimeoutInput').value = '150';
+  await translateHandler();
+  assert.strictEqual(testProvider.generateTimeoutMs, 150000);
+  assert.strictEqual(mockDoc.getElementById('generateTimeoutInput').value, 150);
 });
