@@ -968,7 +968,12 @@
 
     const jargon = scanForPlatformJargon(body + ' ' + desc);
     const platformBanner = el('platformBanner');
-    if (jargon.length){
+    const detections = valResult.gemini && valResult.gemini.detections;
+    if (detections && detections.length > 0) {
+      platformBanner.style.display = 'block';
+      const detItems = detections.map(d => `"${d.term}" (line ${d.line}: ${d.lineContent})`).join(', ');
+      platformBanner.textContent = `Flagged for Gemini translation — ${detections.length} pattern(s) detected: ${detItems}`;
+    } else if (jargon.length){
       platformBanner.style.display = 'block';
       platformBanner.textContent = `Instructions reference ${jargon.join(' and ')} features — these don't exist in Spark and the relevant steps may need rewriting.`;
     } else {
@@ -1221,8 +1226,12 @@
 
       const summaryEl = el('translationSummary');
       let modeStr = 'Deterministic Translation';
-      if (transRes.mode === 'provider') modeStr = `Local Browser Model (${transRes.model})`;
-      else if (transRes.isAI) modeStr = 'Gemini Cloud AI Translation';
+      if (transRes.mode === 'provider') {
+        const pathStr = transRes.targeted !== undefined ? (transRes.targeted ? 'targeted span replacement' : 'full-document fallback') : '';
+        modeStr = `Local Browser Model (${transRes.model}${pathStr ? ' — ' + pathStr : ''})`;
+      } else if (transRes.isAI) {
+        modeStr = 'Gemini Cloud AI Translation';
+      }
 
       const errStr = transRes.providerError ? ` (Browser model fallback: ${transRes.providerError}, using deterministic engine)` : '';
       summaryEl.textContent = `${modeStr} completed${errStr}: ${transRes.changesCount} change(s) applied (HIGH: ${transRes.confidenceCounts.HIGH}, MED: ${transRes.confidenceCounts.MEDIUM}, LOW: ${transRes.confidenceCounts.LOW}, MANUAL REVIEW: ${transRes.manualReviewCount}).`;

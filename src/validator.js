@@ -132,11 +132,31 @@
 
     // 4. Gemini Detection & Translation Need
     if (PlatformDetector) {
-      const pd = PlatformDetector.detectPlatforms(body + ' ' + desc);
-      if (pd.detections.length > 0) {
+      const pd = PlatformDetector.detectPlatforms(body + (desc ? '\n' + desc : ''));
+
+      if (Capabilities && Capabilities.buildCapabilityRequirements) {
+        results.capabilities = Capabilities.buildCapabilityRequirements(pd.detections);
+      }
+
+      const translationDetections = pd.detections.filter(d =>
+        d.platform === 'Anthropic' || d.platform === 'OpenAI' || d.translationSignal === true
+      );
+
+      if (translationDetections.length > 0) {
         results.gemini.needsTranslation = true;
         results.gemini.status = 'NEEDS TRANSLATION';
-        results.gemini.issues.push(`Detected ${pd.detections.length} platform/capability pattern(s) needing Gemini translation`);
+        results.gemini.detections = translationDetections.map(d => ({
+          term: d.term,
+          platform: d.platform,
+          line: d.line,
+          lineContent: d.lineContent
+        }));
+        results.gemini.issues.push(
+          `Detected ${translationDetections.length} pattern(s) needing translation: ` +
+          translationDetections.map(d => `"${d.term}" (line ${d.line})`).join(', ')
+        );
+      } else {
+        results.gemini.detections = [];
       }
     }
 

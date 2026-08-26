@@ -29,15 +29,15 @@
     { id: 'openai_codex', platform: 'OpenAI', term: 'Codex', capability: 'platformRef', re: /\b(codex|chatgpt)\b/i },
 
     // Generic detection
-    { id: 'mcp', platform: 'Generic', term: 'MCP', capability: 'mcpServer', re: /\b(mcp|model context protocol|mcp server|mcp tool)\b/i },
-    { id: 'browser_automation', platform: 'Generic', term: 'browser automation', capability: 'browserAutomation', re: /\b(puppeteer|playwright|selenium|headless browser|open the browser)\b/i },
-    { id: 'web_search', platform: 'Generic', term: 'web search', capability: 'webSearch', re: /\b(google search|bing search|duckduckgo|web search)\b/i },
-    { id: 'http_api_requests', platform: 'Generic', term: 'HTTP/API requests', capability: 'networkAccess', re: /\b(requests\.get|fetch\(|axios|http\.request|curl |wget )\b/i },
-    { id: 'env_variables', platform: 'Generic', term: 'environment variables', capability: 'environmentVars', re: /\b(process\.env|os\.environ|ENV_VAR|[A-Z0-9_]+_KEY)\b/ },
-    { id: 'filesystem_paths', platform: 'Generic', term: 'filesystem paths', capability: 'filesystemPath', re: /(\/tmp\/|\/var\/|\/usr\/|\.\/scripts\/|\.\/references\/)/i },
-    { id: 'cli_commands', platform: 'Generic', term: 'CLI commands', capability: 'cliCommand', re: /\b(npm run|pip install|pytest|git clone|python -m)\b/i },
-    { id: 'tool_syntax', platform: 'Generic', term: 'tool call syntax', capability: 'toolCalling', re: /<function_calls>|<tool_call>|```json\s*\{\s*"tool"/i },
-    { id: 'platform_xml', platform: 'Generic', term: 'platform XML syntax', capability: 'toolCalling', re: /<\/antThinking>|<\/antArtifact>|<thinking>/i },
+    { id: 'mcp', platform: 'Generic', term: 'MCP', capability: 'mcpServer', translationSignal: false, re: /\b(mcp|model context protocol|mcp server|mcp tool)\b/i },
+    { id: 'browser_automation', platform: 'Generic', term: 'browser automation', capability: 'browserAutomation', translationSignal: false, re: /\b(puppeteer|playwright|selenium|headless browser|open the browser)\b/i },
+    { id: 'web_search', platform: 'Generic', term: 'web search', capability: 'webSearch', translationSignal: false, re: /\b(google search|bing search|duckduckgo|web search)\b/i },
+    { id: 'http_api_requests', platform: 'Generic', term: 'HTTP/API requests', capability: 'networkAccess', translationSignal: false, re: /\b(requests\.get|fetch\(|axios|http\.request|curl |wget )\b/i },
+    { id: 'env_variables', platform: 'Generic', term: 'environment variables', capability: 'environmentVars', translationSignal: false, re: /\b(process\.env|os\.environ|ENV_VAR|[A-Z0-9_]+_KEY)\b/ },
+    { id: 'filesystem_paths', platform: 'Generic', term: 'filesystem paths', capability: 'filesystemPath', translationSignal: false, re: /(\/tmp\/|\/var\/|\/usr\/|\.\/scripts\/|\.\/references\/)/i },
+    { id: 'cli_commands', platform: 'Generic', term: 'CLI commands', capability: 'cliCommand', translationSignal: false, re: /\b(npm run|pip install|pytest|git clone|python -m)\b/i },
+    { id: 'tool_syntax', platform: 'Generic', term: 'tool call syntax', capability: 'toolCalling', translationSignal: true, re: /<function_calls>|<tool_call>|```json\s*\{\s*"tool"/i },
+    { id: 'platform_xml', platform: 'Anthropic', term: 'platform XML syntax', capability: 'toolCalling', translationSignal: true, re: /<\/antThinking>|<\/antArtifact>|<thinking>/i },
   ];
 
   function detectPlatforms(text) {
@@ -53,6 +53,7 @@
             platform: pat.platform,
             term: pat.term,
             capability: pat.capability,
+            translationSignal: pat.translationSignal !== false,
             line: lineNum,
             lineContent: lineText.trim()
           });
