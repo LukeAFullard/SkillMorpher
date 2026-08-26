@@ -166,7 +166,7 @@
   button:disabled:hover{ background:transparent; color:var(--ink); }
 
   .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  input[type=text], input[type=password], select, textarea{
+  input[type=text], input[type=password], input[type=number], select, textarea{
     font-family:var(--mono);
     font-size:13px;
     background:#fff;
@@ -331,6 +331,11 @@
         <option value="deterministic">Deterministic Engine (Instant / Rule-Based Default)</option>
       </select>
       <span id="gpuStatusBadge" class="stamp-tag warn">Checking WebGPU...</span>
+    </div>
+
+    <div class="row" style="margin-bottom:10px;">
+      <label class="small" for="generateTimeoutInput" style="margin:0;">Generation timeout (seconds)</label>
+      <input type="number" id="generateTimeoutInput" min="30" max="600" step="10" value="120" style="width:80px; flex:none; min-width:0;" />
     </div>
 
     <div id="localModelBox">
@@ -1153,6 +1158,13 @@
   initBrowserLocalStatus();
 
   el('translateBtn').addEventListener('click', async () => {
+    if (localProviderInstance) {
+      const raw = parseInt(el('generateTimeoutInput').value, 10);
+      const clamped = Math.min(600, Math.max(30, isNaN(raw) ? 120 : raw));
+      localProviderInstance.generateTimeoutMs = clamped * 1000;
+      el('generateTimeoutInput').value = clamped;
+    }
+
     if (!state.currentSkill || typeof Translator === 'undefined') return;
 
     const providerType = el('providerSelect').value;

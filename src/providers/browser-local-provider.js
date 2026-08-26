@@ -527,7 +527,7 @@ Return ONLY valid JSON with the following exact schema:
         await this.loadModel(model, progressCallback);
       }
 
-      const timeoutMs = this.generateTimeoutMs || 60 * 1000;
+      const timeoutMs = this.generateTimeoutMs || 120 * 1000;
       const timeoutSec = Math.round(timeoutMs / 1000);
 
       const gen = async (currentPrompt) => {
