@@ -879,7 +879,13 @@
   }
 
   async function renderManifest(sourceLabel, frontmatter, body, files){
-    if (localProviderInstance) {
+    const name = (frontmatter && typeof frontmatter.name === 'string') ? frontmatter.name : '';
+    const newIdentity = sourceLabel + '::' + name + '::' + (body || '').length;
+    const prevIdentity = state.currentSkill
+      ? (state.currentSkill.sourceLabel + '::' + state.currentSkill.name + '::' + (state.currentSkill.instructions || '').length)
+      : null;
+
+    if (localProviderInstance && prevIdentity !== null && prevIdentity !== newIdentity) {
       await localProviderInstance.unloadModel();
     }
 
@@ -891,7 +897,6 @@
     const diffTbody = el('diffTbody');
     if (diffTbody) diffTbody.innerHTML = '';
 
-    const name = (frontmatter && typeof frontmatter.name === 'string') ? frontmatter.name : '';
     const desc = (frontmatter && typeof frontmatter.description === 'string') ? frontmatter.description : '';
     const fixedName = toKebabCase(name);
     const nameNeedsFix = fixedName && fixedName !== name;
@@ -1139,7 +1144,12 @@
           statusEl.textContent = report.text;
         }
       });
-      statusEl.textContent = `✓ Model ${modelId} successfully loaded and cached in browser.`;
+      const isCachedNow = await localProviderInstance.checkCache(modelId);
+      if (isCachedNow) {
+        statusEl.textContent = `✓ Model ${modelId} successfully loaded and cached in browser.`;
+      } else {
+        statusEl.textContent = `✓ Model ${modelId} successfully loaded in browser (caching unconfirmed).`;
+      }
       statusEl.className = 'status-msg ok';
       await updateModelSpecsDisplay();
     } catch (err) {

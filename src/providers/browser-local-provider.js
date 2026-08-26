@@ -74,6 +74,23 @@
     if (typeof window === 'undefined' || typeof fetch !== 'function') {
       return url;
     }
+
+    const CACHE_NAME = 'skillmorpher-model-cache-v1';
+    if (typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        const cachedResponse = await cache.match(url);
+        if (cachedResponse) {
+          if (progressCallback) {
+            progressCallback({ status: 'loading', text: `Loading ${modelName || 'model'} from browser cache...` });
+          }
+          return await cachedResponse.blob();
+        }
+      } catch (e) {
+        console.warn('Cache lookup failed, proceeding with network fetch:', e);
+      }
+    }
+
     const res = await fetch(url, { signal });
     if (!res.ok) {
       throw new Error(`Failed to download model file: HTTP ${res.status}`);
@@ -101,7 +118,23 @@
         progressCallback({ status: 'downloading', progress, loaded, total, text });
       }
     }
-    return new Blob(chunks);
+    const blob = new Blob(chunks);
+
+    if (typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(url, new Response(blob, {
+          headers: {
+            'Content-Type': res.headers.get('Content-Type') || 'application/octet-stream',
+            'Content-Length': String(blob.size)
+          }
+        }));
+      } catch (e) {
+        console.warn('Failed to write model to cache (continuing without persistence):', e);
+      }
+    }
+
+    return blob;
   }
 
   async function generateAndParse(gen, prompt, retriesLeft = 1) {

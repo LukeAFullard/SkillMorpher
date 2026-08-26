@@ -1630,10 +1630,17 @@ test('renderManifest and clearBtn unload localProviderInstance and reset transla
   mockDoc.getElementById('diffContainer').style.display = 'block';
   mockDoc.getElementById('diffTbody').innerHTML = '<tr><td>1</td></tr>';
 
-  // Call renderManifest to simulate skill switch
+  // Call renderManifest to simulate initial skill load (prevIdentity === null -> no unload)
   await renderManifest('source A', { name: 'skill-a' }, 'Instructions A', []);
+  assert.strictEqual(unloadCount, 0, 'initial renderManifest should not unload model');
 
-  assert.strictEqual(unloadCount, 1, 'renderManifest should unload localProviderInstance');
+  // Call renderManifest with same skill (prevIdentity === newIdentity -> no unload)
+  await renderManifest('source A', { name: 'skill-a' }, 'Instructions A', []);
+  assert.strictEqual(unloadCount, 0, 'same-skill renderManifest should not unload model');
+
+  // Call renderManifest with different skill (prevIdentity !== newIdentity -> unload model)
+  await renderManifest('source B', { name: 'skill-b' }, 'Instructions B', []);
+  assert.strictEqual(unloadCount, 1, 'different-skill renderManifest should unload localProviderInstance');
   assert.strictEqual(mockDoc.getElementById('translationSummary').textContent, '', 'translationSummary should be cleared');
   assert.strictEqual(mockDoc.getElementById('qualityScoreCard').style.display, 'none', 'qualityScoreCard should be hidden');
   assert.strictEqual(mockDoc.getElementById('diffContainer').style.display, 'none', 'diffContainer should be hidden');
