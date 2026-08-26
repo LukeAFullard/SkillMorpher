@@ -236,14 +236,14 @@ Return ONLY the updated instructions string.`;
     }
   }
 
-  async function translateWithProvider({ provider, model, skill, analysis, targetKey = 'geminiSpark' }) {
+  async function translateWithProvider({ provider, model, skill, analysis, targetKey = 'geminiSpark', progressCallback }) {
     if (!provider || typeof provider.translate !== 'function') {
       const det = translateSkill(skill, targetKey);
       return { ...det, mode: 'deterministic' };
     }
 
     try {
-      const res = await provider.translate({ skill, analysis, target: targetKey, model });
+      const res = await provider.translate({ skill, analysis, target: targetKey, model, progressCallback });
       const aiSkill = { ...skill, instructions: res.translatedBody };
       // Note: We pass provider AI output through translateSkill to ensure deterministic normalization
       // of filesystem paths, count manual review warnings, and build structured line-by-line diffs.

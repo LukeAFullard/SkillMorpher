@@ -296,6 +296,85 @@ test('BrowserLocalProvider: loadModel times out on a hung download', async () =>
   delete global.litertCore;
 });
 
+test('BrowserLocalProvider: filters empty/padding chunks and emits staged progress status', async () => {
+  const reports = [];
+  const mockEngine = {
+    createConversation: async () => ({
+      sendMessageStreaming: async function* () {
+        // Yield empty/padding chunks first (simulating issue #2126 upstream control spam)
+        yield '';
+        yield '   ';
+        yield null;
+        yield { text: '' };
+        // Yield real text content
+        yield '{"translated_skill_md": "Clean translated output"}';
+      },
+      delete: async () => {}
+    })
+  };
+
+  const provider = new BrowserLocalProvider();
+  provider.loadedEngine = mockEngine;
+  provider.currentModelId = 'gemma-4-e2b-it-litert';
+
+  const skill = { instructions: 'Use the `computer` tool to open browser.', description: 'Test' };
+  const res = await provider.translate({
+    skill,
+    target: 'gemini-spark',
+    model: 'gemma-4-e2b-it-litert',
+    progressCallback: (r) => reports.push(r)
+  });
+
+  assert.strictEqual(res.translatedBody, 'Clean translated output');
+  assert.ok(reports.length >= 3, 'Should emit progress reports for initializing, warming, and generating phases');
+
+  // Verify initializing phase
+  assert.strictEqual(reports[0].phase, 'initializing');
+  assert.ok(reports[0].text.includes('Initializing model session…'));
+
+  // Verify warming phase
+  assert.strictEqual(reports[1].phase, 'warming');
+  assert.ok(reports[1].text.includes('Warming up (this can take up to a minute)…'));
+
+  // Verify generating phase (emitted only when non-empty text arrives)
+  const genReport = reports.find(r => r.phase === 'generating');
+  assert.ok(genReport, 'Progress report for generating phase should exist');
+  assert.ok(genReport.charsGenerated > 0, 'charsGenerated should count only non-empty content');
+  assert.ok(genReport.text.includes('Generating… ('), 'Status text should reflect generating state');
+});
+
+test('Translator.translateWithProvider forwards progressCallback to provider', async () => {
+  let callbackReceived = false;
+  const mockProvider = {
+    id: 'mock-provider',
+    translate: async ({ progressCallback }) => {
+      if (typeof progressCallback === 'function') {
+        progressCallback({ status: 'generating', text: 'Forwarded progress test' });
+      }
+      return {
+        translatedBody: 'Translated text',
+        changes: [],
+        manualReview: []
+      };
+    }
+  };
+
+  const skill = { instructions: 'Clean text', description: 'Test' };
+  await Translator.translateWithProvider({
+    provider: mockProvider,
+    model: 'mock-model',
+    skill,
+    targetKey: 'geminiSpark',
+    progressCallback: (r) => {
+      if (r.text === 'Forwarded progress test') {
+        callbackReceived = true;
+      }
+    }
+  });
+
+  assert.strictEqual(callbackReceived, true, 'translateWithProvider should forward progressCallback to provider');
+});
+
 test('BrowserLocalProvider: generation timeout deletes chat session and retains engine', async () => {
   let chatDeleted = false;
   let engineDeleted = false;
