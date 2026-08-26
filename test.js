@@ -189,6 +189,50 @@ test('Validator checks frontmatter regex name and pipeline results', () => {
   assert.strictEqual(valResult2.gemini.needsTranslation, true);
 });
 
+test('Native-Spark-style skill does not trigger false-positive needsTranslation', () => {
+  const nativeSparkSkill = {
+    fixedName: 'native-spark-skill',
+    description: 'Processes data using standard Spark conventions when requested by user.',
+    instructions: 'Refer to `./references/schema.json` for details.\nConnect to the mcp server if configured.\nRun `pip install pandas` in environment.\nSet API_KEY in your env.',
+    files: []
+  };
+
+  const valResult = Validator.validateSkill(nativeSparkSkill, 'geminiSpark');
+  assert.strictEqual(valResult.gemini.needsTranslation, false, 'Native Spark skill with general technical capabilities should NOT trigger needsTranslation');
+  assert.strictEqual(valResult.gemini.status, 'PASS');
+  assert.strictEqual(valResult.gemini.detections.length, 0);
+  assert.ok(valResult.capabilities && valResult.capabilities.length > 0, 'Capability mentions should still be recorded in capabilities');
+});
+
+test('Validator populates results.gemini.detections with detailed term, platform, line, and lineContent data', () => {
+  const claudeSkill = {
+    fixedName: 'claude-skill',
+    description: 'Edits files.',
+    instructions: 'Line 1: Overview\nLine 2: Use the Bash tool to inspect repo.\nLine 3: Use `str_replace` to update file.',
+    files: []
+  };
+
+  const valResult = Validator.validateSkill(claudeSkill, 'geminiSpark');
+  assert.strictEqual(valResult.gemini.needsTranslation, true);
+  assert.strictEqual(valResult.gemini.status, 'NEEDS TRANSLATION');
+  assert.strictEqual(valResult.gemini.detections.length, 2);
+
+  const bashDet = valResult.gemini.detections.find(d => d.term === 'Bash');
+  assert.ok(bashDet, 'Bash detection should exist');
+  assert.strictEqual(bashDet.platform, 'Anthropic');
+  assert.strictEqual(bashDet.line, 2);
+  assert.strictEqual(bashDet.lineContent, 'Line 2: Use the Bash tool to inspect repo.');
+
+  const strReplaceDet = valResult.gemini.detections.find(d => d.term === 'str_replace');
+  assert.ok(strReplaceDet, 'str_replace detection should exist');
+  assert.strictEqual(strReplaceDet.platform, 'Anthropic');
+  assert.strictEqual(strReplaceDet.line, 3);
+  assert.strictEqual(strReplaceDet.lineContent, 'Line 3: Use `str_replace` to update file.');
+
+  assert.ok(valResult.gemini.issues[0].includes('"Bash" (line 2)'));
+  assert.ok(valResult.gemini.issues[0].includes('"str_replace" (line 3)'));
+});
+
 test('Translator engine performs concrete Gemini translations, manual review warnings, and diff generation', () => {
   const skill = {
     instructions: 'Use the Bash tool to inspect the repository.\nRun:\n`find . -type f`\nUse `str_replace` to modify the target file.\nUse the `computer` tool to open browser.',
