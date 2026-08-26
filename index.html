@@ -327,8 +327,8 @@
     <label class="small">Provider</label>
     <div class="row" style="margin-bottom:10px;">
       <select id="providerSelect">
-        <option value="browser-local" selected>Browser Local Model (Gemma 4 LiteRT-LM)</option>
-        <option value="deterministic">Deterministic Engine Only (Offline / Rule-Based)</option>
+        <option value="browser-local" selected>Browser Local Model (Gemma 4 LiteRT-LM — Experimental)</option>
+        <option value="deterministic">Deterministic Engine (Instant / Rule-Based Default)</option>
       </select>
       <span id="gpuStatusBadge" class="stamp-tag warn">Checking WebGPU...</span>
     </div>
@@ -433,6 +433,9 @@
 
     <div id="translationPanel" style="margin-top:14px; border-top:1px dashed var(--line); padding-top:12px;">
       <button id="translateBtn" class="primary">Translate to Gemini</button>
+      <div style="font-size:11.5px; color:rgba(22,29,48,0.7); margin-top:6px;">
+        Note: On-device AI translation is experimental and can take up to a minute per skill. For instant results, select the Deterministic Engine above.
+      </div>
       <div id="translationSummary" style="font-size:12.5px; margin-top:8px;"></div>
       <div id="qualityScoreCard" style="display:none; margin-top:10px; background:var(--paper-2); padding:10px; border-radius:3px; font-size:12.5px; border:1px solid var(--line);">
         <div style="font-weight:700; font-family:var(--type); text-transform:uppercase; margin-bottom:6px;">Translation Risk Assessment</div>
@@ -1164,12 +1167,18 @@
       let transRes;
       if (providerType === 'browser-local' && localProviderInstance) {
         const valResult = Validator.validateSkill(state.currentSkill, state.targetProfile);
+        const summaryEl = el('translationSummary');
         transRes = await Translator.translateWithProvider({
           provider: localProviderInstance,
           model: selectedModel,
           skill: state.currentSkill,
           analysis: valResult,
-          targetKey: state.targetProfile
+          targetKey: state.targetProfile,
+          progressCallback: (report) => {
+            if (report && report.text) {
+              summaryEl.textContent = report.text;
+            }
+          }
         });
       } else if (apiKey) {
         transRes = await Translator.translateSkillAI(state.currentSkill, apiKey, state.targetProfile);

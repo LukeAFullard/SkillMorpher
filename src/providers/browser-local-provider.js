@@ -527,10 +527,42 @@ Return ONLY valid JSON with the following exact schema:
         await this.loadModel(model, progressCallback);
       }
 
+      const timeoutMs = this.generateTimeoutMs || 60 * 1000;
+      const timeoutSec = Math.round(timeoutMs / 1000);
+
       const gen = async (currentPrompt) => {
         return await withTimeout(async (signal) => {
           if (this.loadedEngine) {
-            const chat = await this.loadedEngine.createConversation();
+            const startTime = Date.now();
+            let phase = 'initializing';
+            let hasReceivedRealText = false;
+            let textResponse = '';
+
+            const emitProgress = () => {
+              if (!progressCallback) return;
+              const elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+              let text = '';
+              if (phase === 'initializing') {
+                text = `Initializing model session… (${elapsedSec}s / up to ${timeoutSec}s)`;
+              } else if (phase === 'warming') {
+                text = `Warming up (this can take up to a minute)… (${elapsedSec}s / up to ${timeoutSec}s)`;
+              } else {
+                text = `Generating… (${textResponse.length} characters so far, ${elapsedSec}s / up to ${timeoutSec}s)`;
+              }
+              progressCallback({
+                status: 'generating',
+                phase,
+                charsGenerated: textResponse.length,
+                elapsedSec,
+                timeoutSec,
+                text
+              });
+            };
+
+            emitProgress();
+            const ticker = setInterval(emitProgress, 1000);
+
+            let chat = null;
             const abortHandler = () => {
               if (chat && typeof chat.delete === 'function') {
                 try { chat.delete().catch(() => {}); } catch (_) {}
@@ -540,7 +572,10 @@ Return ONLY valid JSON with the following exact schema:
               signal.addEventListener('abort', abortHandler);
             }
             try {
-              let textResponse = '';
+              chat = await this.loadedEngine.createConversation();
+              phase = 'warming';
+              emitProgress();
+
               if (typeof chat.sendMessageStreaming === 'function') {
                 const stream = chat.sendMessageStreaming(currentPrompt);
                 for await (const chunk of stream) {
@@ -559,9 +594,14 @@ Return ONLY valid JSON with the following exact schema:
                       piece = chunk.text;
                     }
                   }
-                  textResponse += piece;
-                  if (progressCallback) {
-                    progressCallback({ status: 'generating', charsGenerated: textResponse.length });
+
+                  if (piece && piece.trim().length > 0) {
+                    if (!hasReceivedRealText) {
+                      hasReceivedRealText = true;
+                      phase = 'generating';
+                    }
+                    textResponse += piece;
+                    emitProgress();
                   }
                 }
               } else if (typeof chat.sendMessage === 'function') {
@@ -569,15 +609,21 @@ Return ONLY valid JSON with the following exact schema:
                 if (signal && signal.aborted) {
                   throw new Error('Generation aborted');
                 }
+                let piece = '';
                 if (typeof msg === 'string') {
-                  textResponse = msg;
+                  piece = msg;
                 } else if (msg && typeof msg.content === 'string') {
-                  textResponse = msg.content;
+                  piece = msg.content;
                 } else if (msg && Array.isArray(msg.content)) {
-                  textResponse = msg.content.map(part => (typeof part === 'string' ? part : part.text || '')).join('');
+                  piece = msg.content.map(part => (typeof part === 'string' ? part : part.text || '')).join('');
                 }
-                if (progressCallback) {
-                  progressCallback({ status: 'generating', charsGenerated: textResponse.length });
+                if (piece && piece.trim().length > 0) {
+                  if (!hasReceivedRealText) {
+                    hasReceivedRealText = true;
+                    phase = 'generating';
+                  }
+                  textResponse += piece;
+                  emitProgress();
                 }
               }
               if (signal && signal.aborted) {
@@ -585,6 +631,7 @@ Return ONLY valid JSON with the following exact schema:
               }
               return textResponse;
             } finally {
+              clearInterval(ticker);
               if (signal) {
                 signal.removeEventListener('abort', abortHandler);
               }
@@ -595,7 +642,7 @@ Return ONLY valid JSON with the following exact schema:
           } else {
             throw new Error('LiteRT-LM core runtime unavailable in environment');
           }
-        }, this.generateTimeoutMs || 60 * 1000, 'Generation');
+        }, timeoutMs, 'Generation');
       };
 
       const isLowConfidence = this.isLowConfidenceOrManualReview(originalBody, analysis);
